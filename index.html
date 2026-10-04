@@ -4676,6 +4676,7 @@ var TouchWalk = {
   moved: false,
   token: 0,
   onTap: null,
+  pan: null,
   toGame: function(cx, cy) {
     var r = canvas.getBoundingClientRect();
     return r.width > 0 ? [(cx - r.left) * W / r.width, (cy - r.top) * H / r.height] : [-1, -1];
@@ -4696,17 +4697,28 @@ var TouchWalk = {
     this.y0 = cy;
     this.t0 = Date.now();
     this.moved = false;
+    this.pan = null;
     this.token++;
   },
   move: function(cx, cy) {
     this.cx = cx;
     this.cy = cy;
-    if (Math.abs(cx - this.x0) + Math.abs(cy - this.y0) > 22) this.moved = true;
+    var dx = cx - this.x0, dy = cy - this.y0;
+    if (this.moved || dx * dx + dy * dy > 64) {
+      this.moved = true;
+      var f = window.field, t = topScene();
+      if (f && f.panTo && t === f && !f.lock && canvas.getBoundingClientRect().width > 0) {
+        if (!this.pan) this.pan = { x: cx, y: cy, cx: f.camX, cy: f.camY };
+        var k = W / canvas.getBoundingClientRect().width / f.zoom;
+        f.panTo(this.pan.cx - (cx - this.pan.x) * k, this.pan.cy - (cy - this.pan.y) * k);
+      }
+    }
   },
   up: function(cancel) {
     var quick = !cancel && !this.moved && Date.now() - this.t0 < 800, g = this.toGame(this.cx, this.cy);
     this.id = null;
     if (quick && g[0] >= 0 && this.onTap) this.onTap(g[0], g[1]);
+    if (quick && window.field && field.panReset) field.panReset();
   }
 };
 var Pinch = {
@@ -6109,9 +6121,38 @@ function FieldScene() {
     f.tapPref = null;
     if (best) best.run();
   };
-  f.camTarget = function() {
+  f.camBase = function() {
     var mw = f.w * 16, mh = f.h * 16, vw = W / f.zoom, vh = (H - (typeof ICam !== "undefined" ? ICam.bot(f) : 0)) / f.zoom, cx = f.p.px - vw / 2, cy = f.p.py - vh / 2;
     return [mw <= vw ? (mw - vw) / 2 : clamp(cx, 0, mw - vw), mh <= vh ? (mh - vh) / 2 : clamp(cy, 0, mh - vh)];
+  };
+  f.pan = { on: false, x: 0, y: 0, hx: 0, hy: 0, map: "" };
+  f.camTarget = function() {
+    var b = f.camBase(), pn = f.pan;
+    if (pn.on) {
+      if (f.lock || pn.map !== f.mapName || typeof TapMove !== "undefined" && TapMove.st || Math.abs(f.p.px - pn.hx) > 0.4 || Math.abs(f.p.py - pn.hy) > 0.4) pn.on = false;
+      else {
+        var mw = f.w * 16, mh = f.h * 16, vw = W / f.zoom, vh = (H - (typeof ICam !== "undefined" ? ICam.bot(f) : 0)) / f.zoom;
+        return [mw <= vw ? b[0] : clamp(pn.x, 0, mw - vw), mh <= vh ? b[1] : clamp(pn.y, 0, mh - vh)];
+      }
+    }
+    return b;
+  };
+  f.panTo = function(x, y) {
+    var mw = f.w * 16, mh = f.h * 16, vw = W / f.zoom, vh = (H - (typeof ICam !== "undefined" ? ICam.bot(f) : 0)) / f.zoom;
+    if (mw <= vw && mh <= vh) return false;
+    var b = f.camBase(), pn = f.pan;
+    pn.on = true;
+    pn.map = f.mapName;
+    pn.hx = f.p.px;
+    pn.hy = f.p.py;
+    pn.x = mw <= vw ? b[0] : clamp(x, 0, mw - vw);
+    pn.y = mh <= vh ? b[1] : clamp(y, 0, mh - vh);
+    f.camX = pn.x;
+    f.camY = pn.y;
+    return true;
+  };
+  f.panReset = function() {
+    f.pan.on = false;
   };
   f.camSnap = function() {
     var t = f.camTarget();
@@ -6705,6 +6746,16 @@ function castFieldSpell(caster, sp, m) {
   caster.mp -= S.mp;
   return true;
 }
+(function() {
+  var _ps = pushScene;
+  pushScene = function(s) {
+    if (field && field.pan && field.pan.on && s && s.name !== "field") {
+      field.pan.on = false;
+      field.camSnap();
+    }
+    return _ps.apply(this, arguments);
+  };
+})();
 var MENU_OPTS = ["Items", "Magic", "Equip", "Status", "Quests", "Save", "Autosave", "Options", "Close"];
 function menuGeo(E) {
   var tot = 180 + E, th = Math.max(121, Math.ceil(tot / 2)), zp = (th - 4) / MENU_OPTS.length;
