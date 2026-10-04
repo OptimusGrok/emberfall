@@ -2979,7 +2979,7 @@ var Music2 = /* @__PURE__ */ (function() {
     harm: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.06, env: { a: 4e-3, d: 0, s: 1, r: 0.05 }, gate: 0.94, vib: { rate: 5.3, depth: 12, delay: 0.2, min: 8 }, pan: -0.35, send: 0.6 },
     arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.045, env: { a: 2e-3, d: 0.07, s: 0.4, r: 0.03 }, gate: 0.8, pan: 0.4, send: 0.8 },
     bass: { oscs: [{ wave: "saw", g: 0.7 }, { wave: "sine", mul: 0.5, g: 0.7 }], vol: 0.2, env: { a: 3e-3, d: 0, s: 1, r: 0.03 }, gate: 0.82, lp: 600, fenv: 3, fdec: 0.1, pan: 0, send: 0 },
-    pad: { oscs: [{ wave: "tri", g: 1 }, { wave: "tri", g: 1 }, { wave: "tri", g: 1 }], vol: 0.04, env: { a: 0.06, d: 0, s: 1, r: 0.25 }, gate: 1, pan: 0, send: 0.5 },
+    pad: { oscs: [{ wave: "tri", g: 1 }, { wave: "tri", g: 1 }, { wave: "tri", g: 1 }], vol: 0.04, env: { a: 0.06, d: 0, s: 1, r: 0.25 }, gate: 0.95, pan: 0, send: 0.5 },
     kick: { vol: 0.34 },
     snare: { vol: 0.2 },
     hat: { vol: 0.085 },
@@ -24672,46 +24672,709 @@ enemySprite = function(id, frame) {
   return BOSSX.get(id, frame, _enemySpriteBoss(id, frame));
 };
 
+// ---- monster_detail.js ----
+var MONX = (function() {
+  var M = { on: true, cache: {}, info: {}, busy: 0, glowC: {}, ms: 0 };
+  function h2(x, y, s) {
+    var n = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(s | 0, 1274126177) | 0;
+    n = Math.imul(n ^ n >>> 13, 1274126177);
+    n ^= n >>> 16;
+    return (n >>> 0) / 4294967296;
+  }
+  function mkRng(seed) {
+    var a = seed | 0;
+    return function() {
+      a = a + 1831565813 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function strSeed(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return h | 0;
+  }
+  function cl(v) {
+    return v < 0 ? 0 : v > 255 ? 255 : v;
+  }
+  var K = {
+    slime: { mats: ["gel"], nz: 0.05, d: 1, fx: ["bubble"], blink: 1 },
+    bat: { mats: ["membrane", "fur"], nz: 0.05, d: 0.5, scars: 1, fx: ["dust"], blink: 1 },
+    wolf: { mats: ["fur"], nz: 0.06, d: 1, scars: 1, fx: ["breath"], blink: 1 },
+    wisp: { mats: ["spirit"], nz: 0.03, d: 1, fx: ["ember"], fc: "#ffb040" },
+    toad: { mats: ["skin"], nz: 0.06, d: 1, scars: 0, fx: ["bubble"], blink: 1 },
+    golem: { mats: ["stone"], nz: 0.07, d: 1, scars: 1, fx: ["dust"], blink: 1 },
+    greymaw: { mats: ["fur"], nz: 0.06, d: 1.2, scars: 3, fx: ["breath"], blink: 1 },
+    sentinel: { mats: ["plate", "stone"], nz: 0.05, d: 0.8, scars: 1, fx: ["spark"], fc: "#60e0ff", blink: 0 },
+    boss: { mats: ["plate"], nz: 0.04, d: 1, scars: 1, fx: ["ember"], fc: "#ff7a30" },
+    frostbat: { mats: ["membrane", "ice"], nz: 0.04, d: 0.5, fx: ["sparkle"], tint: [150, 215, 255], blink: 1 },
+    snowwolf: { mats: ["fur", "rime"], nz: 0.05, d: 1, scars: 1, fx: ["breath", "sparkle"], cold: 1, tint: [150, 215, 255], blink: 1 },
+    frostwisp: { mats: ["spirit", "ice"], nz: 0.03, d: 0.6, fx: ["sparkle"], cold: 1, tint: [150, 230, 255] },
+    icegolem: { mats: ["stone", "ice"], nz: 0.05, d: 1, scars: 1, fx: ["sparkle", "dust"], cold: 1, tint: [140, 210, 255], blink: 1 },
+    rimeknight: { mats: ["plate", "ice"], nz: 0.04, d: 1, scars: 2, fx: ["sparkle"], cold: 1, tint: [140, 205, 255] },
+    blizzwraith: { mats: ["spirit", "ice"], nz: 0.03, d: 1, fx: ["smoke", "sparkle"], cold: 1, tint: [150, 210, 255] },
+    glacier: { mats: ["ice", "stone"], nz: 0.04, d: 1.3, scars: 1, fx: ["sparkle"], cold: 1, tint: [150, 225, 255] },
+    yeti: { mats: ["fur", "rime"], nz: 0.06, d: 1.3, scars: 2, fx: ["breath"], cold: 1, blink: 1 },
+    rimecap: { mats: ["plate", "ice"], nz: 0.04, d: 1.1, scars: 2, fx: ["sparkle"], cold: 1, tint: [140, 205, 255] },
+    tyrant: { mats: ["ice", "stone"], nz: 0.05, d: 1.4, scars: 2, fx: ["sparkle", "dust"], cold: 1, tint: [150, 225, 255], blink: 1 },
+    queen: { mats: ["spirit", "ice", "plate"], nz: 0.03, d: 1.2, fx: ["smoke", "sparkle"], cold: 1, tint: [160, 215, 255] }
+  };
+  M.KIT = K;
+  function Px(c) {
+    var w = c.width, h = c.height, g = c.getContext("2d"), im = g.getImageData(0, 0, w, h), d = im.data, n = w * h;
+    this.w = w;
+    this.h = h;
+    this.g = g;
+    this.im = im;
+    this.d = d;
+    this.body = new Uint8Array(n);
+    this.solid = new Uint8Array(n);
+    this.hot = new Uint8Array(n);
+    var minX = w, maxX = 0, minY = h, maxY = 0, cnt = 0, i, x, y;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      i = y * w + x;
+      var a = d[i * 4 + 3];
+      if (a >= 128) {
+        this.solid[i] = 1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if ((d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3 >= 62) {
+          this.body[i] = 1;
+          cnt++;
+        }
+      }
+    }
+    this.minX = minX;
+    this.maxX = maxX;
+    this.minY = minY;
+    this.maxY = maxY;
+    this.cnt = cnt;
+    this.H = Math.max(1, maxY - minY + 1);
+    this.W = Math.max(1, maxX - minX + 1);
+  }
+  Px.prototype.is = function(x, y) {
+    return x >= 0 && y >= 0 && x < this.w && y < this.h && this.body[y * this.w + x] === 1;
+  };
+  Px.prototype.mul = function(x, y, k) {
+    if (!this.is(x, y)) return;
+    var i = (y * this.w + x) * 4, d = this.d;
+    d[i] = cl(d[i] * k);
+    d[i + 1] = cl(d[i + 1] * k);
+    d[i + 2] = cl(d[i + 2] * k);
+  };
+  Px.prototype.mix = function(x, y, r, g, b, a) {
+    if (!this.is(x, y)) return;
+    var i = (y * this.w + x) * 4, d = this.d;
+    d[i] = cl(d[i] + (r - d[i]) * a);
+    d[i + 1] = cl(d[i + 1] + (g - d[i + 1]) * a);
+    d[i + 2] = cl(d[i + 2] + (b - d[i + 2]) * a);
+  };
+  Px.prototype.pick = function(rnd, x0, y0, x1, y1, tries) {
+    for (var t = 0; t < (tries || 30); t++) {
+      var x = Math.round(this.minX + (x0 + (x1 - x0) * rnd()) * (this.W - 1)), y = Math.round(this.minY + (y0 + (y1 - y0) * rnd()) * (this.H - 1));
+      if (this.is(x, y)) return [x, y];
+    }
+    return null;
+  };
+  function bevel(P) {
+    var w = P.w, x, y, k;
+    for (y = 0; y < P.h; y++) for (x = 0; x < w; x++) {
+      if (!P.body[y * w + x]) continue;
+      var up = !P.is(x, y - 1), dn = !P.is(x, y + 1), lf = !P.is(x - 1, y), rt = !P.is(x + 1, y);
+      k = 1;
+      if (up && !dn) k *= 1.2;
+      else if (dn && !up) k *= 0.8;
+      if (lf && !rt) k *= 1.08;
+      else if (rt && !lf) k *= 0.92;
+      if (k !== 1) P.mul(x, y, k);
+    }
+  }
+  function gradient(P, nz, seed) {
+    var w = P.w, x, y, t, k;
+    for (y = P.minY; y <= P.maxY; y++) for (x = P.minX; x <= P.maxX; x++) {
+      if (!P.body[y * w + x]) continue;
+      t = (y - P.minY) / P.H;
+      k = 1.08 - 0.22 * t + (0.04 - 0.08 * (x - P.minX) / P.W);
+      if (nz) k *= 1 + (h2(x >> 1, y >> 1, seed) - 0.5) * 2 * nz + (h2(x, y, seed + 7) - 0.5) * nz * 0.8;
+      P.mul(x, y, k);
+    }
+  }
+  function walk(P, x, y, dx, dy, len, fn) {
+    for (var i = 0; i < len; i++) {
+      if (!P.is(x, y)) break;
+      fn(x, y, i);
+      x += dx;
+      y += dy;
+    }
+  }
+  var MAT = {
+    fur: function(P, rnd, f, o) {
+      var n = Math.round(P.cnt * 0.04 * o.d), i, p, L, j, light, sx;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0.02, 0.05, 1, 1, 8);
+        L = 2 + Math.floor(rnd() * 3);
+        light = rnd() < 0.5;
+        sx = f & 1 && h2(i, 3, 5) < 0.3 ? 1 : 0;
+        if (!p) continue;
+        walk(P, p[0] + sx, p[1], -1, 1, L, function(x, y, k) {
+          P.mul(x, y, light ? 1.24 - 0.06 * k : 0.76 + 0.05 * k);
+        });
+      }
+    },
+    stone: function(P, rnd, f, o) {
+      var n = 1 + Math.round(P.cnt / 800 * o.d), i, p, x, y, s, st;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0.1, 0.05, 0.9, 0.6, 20);
+        if (!p) continue;
+        x = p[0];
+        y = p[1];
+        st = 7 + Math.floor(rnd() * 8);
+        for (s = 0; s < st; s++) {
+          if (!P.is(x, y)) break;
+          P.mul(x, y, 0.5);
+          P.mul(x + 1, y, 1.26);
+          x += Math.floor(rnd() * 3) - 1;
+          y += 1;
+        }
+      }
+      for (i = 0; i < Math.round(P.cnt / 160 * o.d); i++) {
+        p = P.pick(rnd, 0, 0, 1, 1, 6);
+        if (p) {
+          P.mul(p[0], p[1], 1.3);
+          P.mul(p[0] + 1, p[1] + 1, 0.74);
+        }
+      }
+      if (!o.cold) for (i = 0; i < Math.round(P.cnt / 120); i++) {
+        p = P.pick(rnd, 0, 0.45, 1, 1, 6);
+        if (p) P.mix(p[0], p[1], 76, 118, 52, 0.45);
+      }
+    },
+    gel: function(P, rnd, f, o) {
+      var n = 3 + Math.round(P.cnt / 260), i, p, x, y, ph = f & 1 ? 1 : 0, y0;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0.15, 0.25, 0.85, 0.9, 20);
+        if (!p) continue;
+        x = p[0];
+        y = p[1] - ph * (i % 2);
+        if (!(P.is(x - 2, y) && P.is(x + 2, y) && P.is(x, y - 2) && P.is(x, y + 2))) continue;
+        P.mul(x, y, 0.82);
+        P.mul(x - 1, y - 1, 1.38);
+        P.mul(x, y - 1, 1.3);
+        P.mul(x - 1, y, 1.3);
+        P.mul(x + 1, y + 1, 1.12);
+        P.mul(x + 1, y, 1.08);
+      }
+      for (y0 = 0; y0 < 6; y0++) {
+        var yy = P.minY + 2 + y0 * 1;
+        for (var xx = P.minX; xx < P.maxX; xx++) if (P.is(xx, yy)) {
+          P.mix(xx + 2, yy, 255, 255, 255, 0.5);
+          P.mix(xx + 3, yy, 255, 255, 255, 0.3);
+          break;
+        }
+      }
+      for (y0 = 0; y0 < 4; y0++) for (xx = P.minX; xx <= P.maxX; xx++) {
+        var yb = P.maxY - 3 - y0;
+        if (P.is(xx, yb)) P.mul(xx, yb, 1.08);
+      }
+    },
+    ice: function(P, rnd, f, o) {
+      var n = 3 + Math.round(P.cnt / 420 * o.d), i, p, dir, L;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0.05, 0.05, 0.9, 0.9, 20);
+        if (!p) continue;
+        dir = rnd() < 0.5 ? -1 : 1;
+        L = 5 + Math.floor(rnd() * 8);
+        walk(P, p[0], p[1], 1, dir, L, function(x, y) {
+          P.mul(x, y, 1.3);
+          P.mul(x, y + 1, 0.84);
+        });
+      }
+      for (i = 0; i < Math.round(P.cnt / 200); i++) {
+        p = P.pick(rnd, 0, 0, 1, 1, 6);
+        if (p) P.mix(p[0], p[1], 230, 250, 255, 0.35);
+      }
+    },
+    rime: function(P, rnd, f, o) {
+      var x, y;
+      for (y = P.minY; y <= P.maxY; y++) for (x = P.minX; x <= P.maxX; x++) {
+        if (P.is(x, y) && !P.is(x, y - 1) && h2(x, y, 11) < 0.55) {
+          P.mix(x, y, 235, 250, 255, 0.55);
+          if (h2(x, y, 12) < 0.4) P.mix(x, y + 1, 235, 250, 255, 0.35);
+        }
+      }
+    },
+    plate: function(P, rnd, f, o) {
+      var step = Math.max(8, Math.round(P.H / 7)), y, x, rv = 0, i, p;
+      for (y = P.minY + step; y < P.maxY - 3; y += step) for (x = P.minX; x <= P.maxX; x++) {
+        if (P.is(x, y) && P.is(x, y + 1) && P.is(x, y - 1)) {
+          P.mul(x, y, 0.78);
+          P.mul(x, y + 1, 1.14);
+          if (++rv % 7 === 0) {
+            P.mul(x, y - 1, 1.55);
+            P.mul(x + 1, y, 0.7);
+          }
+        }
+      }
+      for (i = 0; i < Math.round(P.cnt / 260 * o.d); i++) {
+        p = P.pick(rnd, 0, 0, 1, 1, 8);
+        if (!p) continue;
+        walk(P, p[0], p[1], 1, 1, 3 + Math.floor(rnd() * 3), function(x2, y2) {
+          P.mul(x2, y2, 1.32);
+          P.mul(x2 + 1, y2, 0.8);
+        });
+      }
+    },
+    skin: function(P, rnd, f, o) {
+      var n = Math.round(P.cnt / 70), i, p;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0.1, 0.2, 0.95, 0.95, 10);
+        if (!p) continue;
+        P.mul(p[0], p[1], 1.26);
+        P.mul(p[0] - 1, p[1], 1.12);
+        P.mul(p[0] + 1, p[1] + 1, 0.72);
+        P.mul(p[0], p[1] + 1, 0.82);
+      }
+      for (i = 0; i < 5; i++) {
+        p = P.pick(rnd, 0.1, 0.3, 0.9, 0.9, 10);
+        if (!p) continue;
+        for (var a = 0; a < 3; a++) for (var b = 0; b < 2; b++) P.mul(p[0] + a, p[1] + b, 0.86);
+      }
+      for (i = 0; i < 3; i++) {
+        p = P.pick(rnd, 0.1, 0.15, 0.8, 0.6, 10);
+        if (p) {
+          P.mul(p[0], p[1], 1.4);
+          P.mul(p[0] + 1, p[1], 1.25);
+        }
+      }
+    },
+    spirit: function(P, rnd, f, o) {
+      var x, y, k, cx = P.minX + P.W / 2, cy = P.minY + P.H * 0.45;
+      for (y = P.minY; y <= P.maxY; y++) for (x = P.minX; x <= P.maxX; x++) {
+        if (!P.is(x, y)) continue;
+        k = 1 + 0.1 * Math.sin(y * 0.55 + x * 0.35 - f * 1.57);
+        var dx = (x - cx) / P.W, dy = (y - cy) / P.H;
+        k += 0.16 * Math.max(0, 0.32 - Math.sqrt(dx * dx + dy * dy)) * 3;
+        P.mul(x, y, k);
+      }
+      var n = Math.round(P.cnt / 130), i, p;
+      for (i = 0; i < n; i++) {
+        p = P.pick(rnd, 0, 0.3, 1, 1, 6);
+        if (p) P.mul(p[0], p[1], 1.22);
+      }
+    },
+    membrane: function(P, rnd, f, o) {
+      var ax = Math.round(P.minX + P.W / 2), ay = Math.round(P.minY + P.H * 0.42), i, tx, ty, t, side;
+      for (i = 0; i < 8; i++) {
+        side = i % 2 ? 1 : -1;
+        tx = side < 0 ? P.minX + 1 : P.maxX - 1;
+        ty = Math.round(P.minY + P.H * (0.08 + 0.75 * (Math.floor(i / 2) / 3)));
+        for (t = 0; t <= 1; t += 0.03) {
+          var x = Math.round(ax + (tx - ax) * t), y = Math.round(ay + (ty - ay) * t);
+          P.mul(x, y, 0.8);
+          P.mul(x, y - 1, 1.1);
+        }
+      }
+    }
+  };
+  function scars(P, rnd, n) {
+    for (var i = 0; i < n; i++) {
+      var p = P.pick(rnd, 0.12, 0.22, 0.6, 0.65, 30);
+      if (!p) continue;
+      var L = 5 + Math.floor(rnd() * 4), dir = rnd() < 0.5 ? 1 : 0;
+      for (var s = 0; s < L; s++) {
+        var x = p[0] + s, y = p[1] + (dir ? s : Math.floor(s * 0.6));
+        if (!P.is(x, y)) break;
+        P.mul(x, y, 0.5);
+        P.mix(x + 1, y, 238, 214, 206, 0.45);
+        if (s % 2 === 1) {
+          P.mul(x - 1, y + 1, 0.72);
+          P.mul(x + 1, y - 1, 0.72);
+        }
+      }
+    }
+  }
+  function hotPass(P, kit, f, id) {
+    var w = P.w, h = P.h, d = P.d, x, y, i, hots = [];
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      i = y * w + x;
+      if (!P.solid[i]) continue;
+      var o = i * 4, mx = Math.max(d[o], d[o + 1], d[o + 2]), mn = Math.min(d[o], d[o + 1], d[o + 2]);
+      if (mx >= 205 && (mx - mn) / mx >= 0.4) {
+        var sum = 0, c = 0;
+        for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) {
+          var xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h || !P.solid[yy * w + xx]) continue;
+          var j = (yy * w + xx) * 4;
+          sum += (d[j] + d[j + 1] + d[j + 2]) / 3;
+          c++;
+        }
+        if ((d[o] + d[o + 1] + d[o + 2]) / 3 > sum / c + 35) {
+          P.hot[i] = 1;
+          hots.push([x, y, d[o], d[o + 1], d[o + 2]]);
+        }
+      }
+    }
+    var pulse = [1, 1.14, 0.94, 1.2][f & 3], k;
+    for (k = 0; k < hots.length; k++) {
+      var hp = hots[k];
+      for (var ry = -2; ry <= 2; ry++) for (var rx = -2; rx <= 2; rx++) {
+        if (!rx && !ry) continue;
+        var xx2 = hp[0] + rx, yy2 = hp[1] + ry;
+        if (xx2 < 0 || yy2 < 0 || xx2 >= w || yy2 >= h || P.hot[yy2 * w + xx2]) continue;
+        P.mix(xx2, yy2, hp[2], hp[3], hp[4], Math.max(Math.abs(rx), Math.abs(ry)) === 1 ? 0.2 : 0.07);
+      }
+    }
+    for (k = 0; k < hots.length; k++) {
+      var q = hots[k], oo = (q[1] * w + q[0]) * 4;
+      d[oo] = cl(d[oo] * pulse + 8);
+      d[oo + 1] = cl(d[oo + 1] * pulse + 8);
+      d[oo + 2] = cl(d[oo + 2] * pulse + 8);
+    }
+    return hots;
+  }
+  function eyesOf(P, hots) {
+    var seen = {}, clusters = [], i, k;
+    for (i = 0; i < hots.length; i++) {
+      var key = hots[i][0] + "," + hots[i][1];
+      if (seen[key]) continue;
+      var st = [hots[i]], cl2 = [];
+      seen[key] = 1;
+      while (st.length) {
+        var c = st.pop();
+        cl2.push(c);
+        for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+          var xx = c[0] + dx, yy = c[1] + dy;
+          if ((dx || dy) && P.hot[yy * P.w + xx] && P.is(xx, yy) && !seen[xx + "," + yy]) {
+            seen[xx + "," + yy] = 1;
+            st.push([xx, yy]);
+          }
+        }
+      }
+      clusters.push(cl2);
+    }
+    var out = [];
+    clusters.filter(function(c2) {
+      var cy = 0;
+      c2.forEach(function(p) {
+        cy += p[1];
+      });
+      cy /= c2.length;
+      return c2.length >= 2 && c2.length <= 10 && cy < P.minY + P.H * 0.6;
+    }).sort(function(a, b) {
+      return b.length - a.length;
+    }).slice(0, 2).forEach(function(c2) {
+      out.push(c2.map(function(p) {
+        return [p[0], p[1]];
+      }));
+    });
+    return out;
+  }
+  M.build = function(id, f, prev) {
+    var kit = K[id], c = document.createElement("canvas");
+    c.width = prev.width;
+    c.height = prev.height;
+    var g = c.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    g.drawImage(prev, 0, 0);
+    var P = new Px(c), seed = strSeed(id), rnd = mkRng(seed), o = { d: kit.d || 1, cold: kit.cold }, i;
+    bevel(P);
+    gradient(P, kit.nz, seed & 65535);
+    if (kit.tint) {
+      var q = 0, x, y;
+      for (y = P.minY; y <= P.maxY; y++) for (x = P.minX; x <= P.maxX; x++) if (P.body[y * P.w + x]) P.mix(x, y, kit.tint[0], kit.tint[1], kit.tint[2], 0.07);
+    }
+    for (i = 0; i < kit.mats.length; i++) {
+      var r2 = mkRng(seed + i * 977);
+      MAT[kit.mats[i]](P, r2, f, o);
+    }
+    if (kit.scars) scars(P, mkRng(seed ^ 23717), kit.scars);
+    var hots = hotPass(P, kit, f, id);
+    P.g.putImageData(P.im, 0, 0);
+    if (!(f & 2) && !(f & 1) && !M.info[id]) {
+      var snout = null, ry;
+      for (ry = Math.round(P.minY + P.H * 0.25); ry <= P.minY + P.H * 0.5; ry++) for (var rx = P.maxX; rx > P.minX; rx--) if (P.solid[ry * P.w + rx]) {
+        if (!snout || rx > snout[0]) snout = [rx, ry];
+        break;
+      }
+      var sp = [];
+      for (i = 0; i < 40 && sp.length < 8; i++) {
+        var pp = P.pick(rnd, 0.05, 0.05, 0.95, 0.9, 5);
+        if (pp) sp.push(pp);
+      }
+      M.info[id] = { eyes: kit.blink ? eyesOf(P, hots) : [], hots: hots.slice(0, 80), snout, sp, w: P.w, h: P.h };
+    }
+    return c;
+  };
+  M.glow = function(id) {
+    var gc = M.glowC[id];
+    if (gc !== void 0) return gc;
+    var inf = M.info[id];
+    if (!inf || !inf.hots.length) return M.glowC[id] = null;
+    var c = document.createElement("canvas");
+    c.width = inf.w;
+    c.height = inf.h;
+    var g = c.getContext("2d");
+    inf.hots.forEach(function(p) {
+      g.fillStyle = "rgba(" + p[2] + "," + p[3] + "," + p[4] + ",0.3)";
+      g.fillRect(p[0] - 1, p[1] - 1, 3, 3);
+      g.fillStyle = "rgba(" + p[2] + "," + p[3] + "," + p[4] + ",0.9)";
+      g.fillRect(p[0], p[1], 1, 1);
+    });
+    return M.glowC[id] = c;
+  };
+  M.overlay = function(ctx, id, t, x, y, z, ph) {
+    var kit = K[id], inf = M.info[id];
+    if (!M.on || !kit || !inf) return;
+    z = z || 1;
+    ph = ph || 0;
+    var i, a, q, gl = M.glow(id), cold = kit.cold, px = function(ax, ay, s3, col, al2) {
+      ctx.globalAlpha = al2;
+      ctx.fillStyle = col;
+      ctx.fillRect(Math.round(x + ax * z), Math.round(y + ay * z), s3 * z, s3 * z);
+    };
+    ctx.save();
+    if (gl) {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.18 + 0.2 * (0.5 + 0.5 * Math.sin(t * 2.6 + ph));
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(gl, Math.round(x), Math.round(y), inf.w * z, inf.h * z);
+      ctx.globalCompositeOperation = "source-over";
+    }
+    if (inf.eyes.length) {
+      var per = 3.2 + Math.abs(ph * 7.3) % 2.4, tb = (t + ph) % per;
+      if (tb < 0.13) {
+        ctx.fillStyle = "#10141c";
+        ctx.globalAlpha = 0.92;
+        inf.eyes.forEach(function(e) {
+          e.forEach(function(p) {
+            ctx.fillRect(Math.round(x + p[0] * z), Math.round(y + p[1] * z), z, z);
+          });
+        });
+      }
+    }
+    var fxs = kit.fx || [];
+    for (var fi = 0; fi < fxs.length; fi++) {
+      var fx = fxs[fi];
+      if (fx === "bubble") {
+        for (i = 0; i < 3; i++) {
+          q = (t * 0.32 + i / 3 + h2(i, 1, 3) * 0.3 + ph * 0.1) % 1;
+          px(inf.w * (0.3 + 0.4 * h2(i, 2, 3)) + Math.sin(t * 2 + i * 2) * 1.2, inf.h * (0.8 - 0.55 * q), i === 0 ? 2 : 1, "#e8fff0", Math.sin(q * Math.PI) * 0.75);
+        }
+      } else if (fx === "dust") {
+        for (i = 0; i < 3; i++) {
+          q = (t * 0.28 + i / 3 + ph * 0.07) % 1;
+          px(inf.w * (0.2 + 0.6 * h2(i, 5, 4)), inf.h * (0.3 + 0.62 * q), 1, cold ? "#d8eefc" : "#a89478", Math.sin(q * Math.PI) * 0.6);
+        }
+      } else if (fx === "ember") {
+        for (i = 0; i < 3; i++) {
+          q = (t * 0.4 + i / 3 + ph * 0.05) % 1;
+          px(inf.w * (0.25 + 0.5 * h2(i, 7, 4)) + Math.sin(t * 3 + i) * 1.5, inf.h * (0.85 - 0.8 * q), 1, kit.fc || "#ffa040", Math.sin(q * Math.PI) * 0.85);
+        }
+      } else if (fx === "spark") {
+        for (i = 0; i < 2; i++) {
+          q = (t * 0.9 + i * 0.5 + ph) % 1;
+          if (q < 0.18) {
+            var s = inf.sp[(i * 3 + Math.floor((t + ph) * 0.9)) % inf.sp.length];
+            if (s) {
+              px(s[0], s[1], 1, kit.fc || "#60e0ff", 0.9);
+              px(s[0] - 1, s[1], 1, kit.fc || "#60e0ff", 0.5);
+              px(s[0] + 1, s[1], 1, kit.fc || "#60e0ff", 0.5);
+            }
+          }
+        }
+      } else if (fx === "sparkle") {
+        for (i = 0; i < 3; i++) {
+          a = Math.sin(t * 2.2 + i * 2.1 + ph * 3);
+          if (a > 0.82) {
+            var s2 = inf.sp[(i * 2 + Math.floor((t * 2.2 + i * 2.1 + ph * 3) / 6.283)) % inf.sp.length];
+            if (s2) {
+              var al = (a - 0.82) / 0.18;
+              px(s2[0], s2[1], 1, "#ffffff", al);
+              px(s2[0] - 1, s2[1], 1, "#cfeeff", al * 0.6);
+              px(s2[0] + 1, s2[1], 1, "#cfeeff", al * 0.6);
+              px(s2[0], s2[1] - 1, 1, "#cfeeff", al * 0.6);
+              px(s2[0], s2[1] + 1, 1, "#cfeeff", al * 0.6);
+            }
+          }
+        }
+      } else if (fx === "breath") {
+        var sn = inf.snout, pb = (t + ph) % 3.8;
+        if (sn && pb < 1.3) {
+          q = pb / 1.3;
+          for (i = 0; i < 3; i++) px(sn[0] + 2 + q * 7 + i * 2, sn[1] - q * 3 - i * 0.6, 1 + (i === 0 ? 1 : 0), cold ? "#e8fbff" : "#c8ccd4", (1 - q) * 0.5);
+        }
+      } else if (fx === "smoke") {
+        for (i = 0; i < 4; i++) {
+          q = (t * 0.3 + i / 4 + ph * 0.05) % 1;
+          px(inf.w * (0.2 + 0.6 * h2(i, 9, 4)) + Math.sin(t * 1.4 + i * 2) * 2, inf.h * (0.97 - 0.45 * q), 1 + (i & 1), "#dcecff", Math.sin(q * Math.PI) * 0.4);
+        }
+      }
+    }
+    ctx.restore();
+  };
+  M.draw = function(ctx, id, t, x, y, z) {
+    var fr = Math.floor(t * 4) & 3, s = enemySprite(id, fr), bob = Math.round(Math.sin(t * 2.2) * 0.8 * z);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(s, Math.round(x), Math.round(y + bob), s.width * z, s.height * z);
+    M.overlay(ctx, id, t, x, y + bob, z, 0.3);
+    return s;
+  };
+  return M;
+})();
+var _enemySpriteMonX = enemySprite;
+enemySprite = function(id, frame) {
+  frame = frame | 0;
+  if (frame < 0) frame = 0;
+  var base = frame & 1;
+  if (!MONX.on || MONX.busy || !MONX.KIT[id] || !CORE.ENEMIES[id]) return _enemySpriteMonX(id, base);
+  var k = id + "|" + frame, c = MONX.cache[k];
+  if (c) return c;
+  var t0 = performance.now(), prev;
+  MONX.busy++;
+  try {
+    prev = _enemySpriteMonX(id, base);
+    c = MONX.build(id, frame, prev);
+  } catch (e) {
+    c = prev || _enemySpriteMonX(id, base);
+  } finally {
+    MONX.busy--;
+  }
+  MONX.ms += performance.now() - t0;
+  return MONX.cache[k] = c;
+};
+if (typeof BX !== "undefined" && BX.idleFx) {
+  var _idleFxMonX = BX.idleFx;
+  BX.idleFx = function(ctx, t, e, id, cx, top, w, h) {
+    _idleFxMonX(ctx, t, e, id, cx, top, w, h);
+    if (MONX.on && MONX.KIT[id] && MONX.info[id]) MONX.overlay(ctx, id, t, Math.round(cx - w / 2), top, 1, e.x * 0.37 + e.y * 0.11);
+  };
+}
+
 // ---- bestiary.js ----
 var Bestiary = (function() {
   var B = {}, ELEM_COL = { fire: "#ff9060", ice: "#80d8ff", bolt: "#ffe060", wind: "#a0f0b0", none: "#c8c8d8" };
   var LORE = {
-    slime: "Moss Slimes are what the Vale of Ash grows when old rain meets older ember-ash: a damp green lump that slowly digests whatever it settles on. Farmers in Brindlemoor call them harmless, right up until you stand still. They hate flame, and one torch will scatter a whole meadow of them.",
-    bat: "Duskwings nest in the cracked chimneys of ruined waystations and come out when the lamps are lit. They hunt warmth more than meat, sipping it in quick stinging bites before vanishing. A gust of wind or a spark of lightning ruins their flight, and a clipped Duskwing cannot turn.",
-    wolf: "Thornwolves wear the bramble of the Vale like armor, burrs knotted into their coats since the Hollow Crown fell. They hunt in the gap between dusk and moonrise and never chase far from the treeline. Travelers learn to keep a fire between themselves and the hedge.",
-    wisp: "A Cinder Wisp is a spark that refused to go out when the Crown burned. It drifts through the Emberpeaks tunnels feeding on heat, and fire only makes it brighter. Cold and a good gale are the only things that make it sulk.",
-    toad: "Deep in the cave pools, Hex Toads soak up the last sour magic seeping from the peaks and croak it back out as chill. Miners swear their song curdles milk at a hundred paces. Fire cooks them and lightning stops them, but ice barely itches.",
-    golem: "Built to haul ore for a foreman nobody remembers, the Rust Golems kept working after the mines emptied. Rain and time have crusted them red, and their orders have worn down to a single one: nothing passes. Lightning loosens the joints that hammers cannot.",
-    greymaw: "Every village near the Vale tells of Old Greymaw, the grey wolf who bit a king's hand and was never caught. She is older than the road and wiser than every trap set for her. Some say she guards the fox-paths so that something worse cannot use them.",
-    sentinel: "The Hollow Sentinel is a suit of Crown-guard armor that still stands its post at the cave mouth long after its wearer was lost. When the last royal seal faded from its breastplate, it decided that every visitor must be an intruder. It answers to no living banner.",
-    boss: "Once the regent who held the Crown for a king no one remembers, he refused to let it pass into other hands, and the Crown answered by hollowing him out. Now ember and silence wear his shape on a throne in the deepest cave. He does not want to rule; he only cannot let go.",
-    frostbat: "Where Duskwings keep to cracked chimneys, Rime Bats keep to the frozen eaves of Frostmere, and hunger has made them bold. Their bite leaves a white, numbing frost. The Rimewatch hang a lantern at every door at night for the same reason shepherds keep dogs.",
-    snowwolf: "Snow Wolves came down from the high passes the winter the Rime Throne woke, and the cold seems to have followed their packs. They are broad, patient and quick, with frost-rimed manes that ring like bells as they run. A lone traveler only hears the bells once.",
-    frostwisp: "A Frost Wisp is the pale cousin of the Cinder Wisp, born where the last hearths of Frostmere guttered out. It drifts over snowfields and frozen marsh, drawing the heat from anything bright. Flame startles it badly, and so does sudden thunder.",
-    icegolem: "Frostmere's stonecutters once carved golems from glacier ice to hold the roads against avalanches. Hoarwen's winter taught them a different duty. They are slow, huge and nearly unbreakable by blade, but they crack under heat and storm.",
-    rimeknight: "Rime Knights served the Frost Court when it still had a living queen, sworn to keep the keep's gates. Cold keeps their armor from rusting and their oaths from fading, so they still march in pairs with lances lowered. They respect nothing but formation, and fire.",
-    blizzwraith: "Where a blizzard dies in the pass, a Gale Wraith sometimes rises from the last of the wind. It has no body, only a howl wearing a cloak of snow, and it hurls storms at whoever it finds. Warmth hurts it, and so does anyone who stays calm while it screams.",
-    glacier: "The Ice Warden has guarded the Rimegate since before the Hollow Crown fell, a towering knot of living glacier shaped like a sentry. It tests every traveler by fighting first and asking nothing, ever. Fire and a quick strike are the only words it understands.",
-    yeti: "The Pale Yeti is a legend among the Rimewatch: a white shape in the storm that takes sledges and leaves prints twice the size of a man's. It is not cruel, only territorial, and hungry in the way mountains are. A fire at your back and a hard hit to the chest will send it away, for a season.",
-    rimecap: "Captain of the Frost Court's honor guard, he held the keep's yard against the thaw riots and was never relieved. Winter kept his body upright and his orders intact, and now he drills empty ranks in silence. He fights as he commanded: with a lance and a ward of ice.",
-    tyrant: "No one in Frostmere knows what the Frost Tyrant was before it became a tyrant. It sleeps in the dungeon under the keep, a mountain of black ice the queen once chained to her will and has since forgotten how to release. Its roar sets avalanches loose in the next valley.",
-    queen: "Hoarwen was the last queen of Frostmere. She bargained with the Hollow Crown to end a winter that would not stop, and learned too late that it only ended in her. Now she sits the Rime Throne and keeps her whole kingdom in a long, kind, final frost, because she cannot bear to remember warmth."
+    slime: "Moss Slimes are what the Vale of Ash grows when old rain meets older ember-ash: a damp green lump that slowly digests whatever it settles on. They have no hunger worth the name, only a patient habit of closing over anything warm. Farmers in Brindlemoor call them harmless, right up until you stand still. Children are told to throw pebbles at them, since a pebble sinks in and comes out clean a week later. They gather on the roadsides after storms, shining like wet glass, and the oldest are streaked with threads of rust and root. They hate flame, and one torch will scatter a whole meadow of them.",
+    bat: "Duskwings nest in the cracked chimneys of ruined waystations and come out when the lamps are lit. They hunt warmth more than meat, sipping it in quick stinging bites before vanishing into the dark. Old smugglers say they learned the habit from the Crown's night-couriers, whose lanterns they followed for a hundred years. Their leathery wings are lined with ash, which is why a Duskwing leaves a gray smear on a windowpane. In a flock they are only a nuisance, but one that finds you alone will not stop circling. A gust of wind or a spark of lightning ruins their flight, and a clipped Duskwing cannot turn.",
+    wolf: "Thornwolves wear the bramble of the Vale like armor, burrs knotted into their coats since the Hollow Crown fell. They hunt in the gap between dusk and moonrise and never chase far from the treeline. Their packs keep to the old hedgerows, as if the walls of vanished farms still mattered to them. Shepherds say a thornwolf will take a stray lamb but leave the bell, and that the bells hang in their dens like trophies. They are not cruel, only hungry and stubborn, and they test every fire they meet. Travelers learn to keep a flame between themselves and the hedge, because it is the one thing the pack respects.",
+    wisp: "A Cinder Wisp is a spark that refused to go out when the Crown burned. It drifts through the Emberpeaks tunnels feeding on heat, and the first miners to meet one mistook it for a lost lantern. Where a wisp passes the stone stays warm for days, with a faint smell of struck flint. They giggle, or so it sounds, when the tunnel air moves just so. They cannot be reasoned with, but they can be fooled, because they follow any brighter light. Fire only makes them brighter, while cold and a good gale are the only things that make them sulk.",
+    toad: "Deep in the cave pools, Hex Toads soak up the last sour magic seeping from the peaks and croak it back out as chill. They sit so still on the wet stone that moss grows on their backs, and the purple warts are said to be where the spells settle. Miners swear their song curdles milk at a hundred paces. A toad will not hunt while it sings, which is the only mercy the pools offer. Hedge-witches pay well for the warts, though no two witches agree on what to do with them. Fire cooks them and lightning stops them, but ice barely itches.",
+    golem: "Built to haul ore for a foreman nobody remembers, the Rust Golems kept working after the mines emptied. Rain seeping down the shafts and time have crusted them red, and their orders have worn down to a single one: nothing passes. Their furnace-cores still glow, fed by a fire no one has stoked in a century. Some carry tally marks scratched into their shoulders, one for every cart they ever lifted. They do not tire and they do not sleep, but they are slow to turn. Lightning loosens the joints that hammers cannot.",
+    greymaw: "Every village near the Vale tells of Old Greymaw, the grey wolf who bit a king's hand and was never caught. She is older than the road and wiser than every trap set for her, and the scars along her flank are a map of all of them. Hunters who have followed her tracks say they always end at running water. She never takes sheep, and she never attacks the weak or the lost. She comes only for those who carry fire and steel into the hedges at night. Some say she guards the fox-paths so that something worse cannot use them.",
+    sentinel: "The Hollow Sentinel is a suit of Crown-guard armor that still stands its post at the cave mouth long after its wearer was lost. When the last royal seal faded from its breastplate, it decided that every visitor must be an intruder. Its helm is empty but for a pale blue light that tracks whatever moves. It carries a shield older than the road above it, dented by wars no chronicle remembers. The ghosts of the old guard say the armor was meant to rest, but nobody was left to give the order. It answers to no living banner and will fight until the iron rusts through. Lightning finds the seams its makers forgot.",
+    boss: "Once the regent who held the Crown for a king no one remembers, he refused to let it pass into other hands, and the Crown answered by hollowing him out. Now ember and silence wear his shape on a throne in the deepest cave. His robes still keep the color of royal purple, though they burn from within with a slow red light. Every century he rises, counts the empty benches of his court, and sits again. His gaze alone can scorch a visitor's hope. He does not want to rule; he only cannot let go. Ending him may be the only mercy left to him.",
+    frostbat: "Where Duskwings keep to cracked chimneys, Rime Bats keep to the frozen eaves of Frostmere, and hunger has made them bold. Their bite leaves a white, numbing frost that creeps along the wound. They hang in rows under the roofs of the lower town, silent as icicles, until a lantern passes. Frostmere's children are taught to count them before bed, and to stay awake if the count is wrong. The Rimewatch hang a lantern at every door at night for the same reason shepherds keep dogs. Fire sends them scattering, and the wind flings them about like dead leaves.",
+    snowwolf: "Snow Wolves came down from the high passes the winter the Rime Throne woke, and the cold seems to have followed their packs. They are broad, patient and quick, with frost-rimed manes that ring like bells as they run. Trappers say you can hear a pack a mile away, and that the bells go quiet only when they have chosen a target. They circle in the white until their prey tires, then close from every side at once. Their cubs are born blue-eyed and never see a summer. A lone traveler only hears the bells once. Fire is the one thing in the snow that makes them hesitate.",
+    frostwisp: "A Frost Wisp is the pale cousin of the Cinder Wisp, born where the last hearths of Frostmere guttered out. It drifts over snowfields and frozen marsh, drawing the heat from anything bright. Lanterns left on the ice go dark within a quarter hour when one is near. They are said to be the memory of the fires, grieving in the only way fire can. Travelers who follow one find only more snow, and often their own footprints. It sings in a thin high note that is almost a lullaby. Flame startles it badly, and so does sudden thunder.",
+    icegolem: "Frostmere's stonecutters once carved golems from glacier ice to hold the roads against avalanches. Hoarwen's winter taught them a different duty, and now they keep every pass shut to the living. They are slow, huge and nearly unbreakable by blade, with frost thick enough to dull any edge. Each one carries a locked-in snowflake pattern in its chest that glows when it wakes. The guild marks are still cut into their wrists, though the guild is long gone. They do not hurry, because the cold never has. They crack under heat and storm.",
+    rimeknight: "Rime Knights served the Frost Court when it still had a living queen, sworn to keep the keep's gates. Cold keeps their armor from rusting and their oaths from fading, so they still march in pairs with lances lowered. Their visors are sealed with frost, and nobody has seen a face under one for generations. They salute empty thrones, empty towers, and travelers, in that order of respect. A shield sweep from a knight can clear a whole doorway of attackers. They respect nothing but formation, and fire.",
+    blizzwraith: "Where a blizzard dies in the pass, a Gale Wraith sometimes rises from the last of the wind. It has no body, only a howl wearing a cloak of snow, and it hurls storms at whoever it finds. Shepherds in the high pastures say each wraith is the grief of a storm that never got to finish. It circles its prey slowly, its cloak lengthening with every turn, until the whole pass is white. Its touch is a silence that numbs before it hurts. It cannot abide a flame, and it cannot be hurried. Warmth hurts it, and so does anyone who stays calm while it screams.",
+    glacier: "The Ice Warden has guarded the Rimegate since before the Hollow Crown fell, a towering knot of living glacier shaped like a sentry. It tests every traveler by fighting first and asking nothing, ever. Its crystal breastplate is clear enough to show the sleeping shape of the first warden frozen inside. Pilgrims who reached the gate in the old days left small bronze coins on its feet, and the coins are still there, deep in the ice. It speaks only in the groaning of the glacier at night. Fire and a quick strike are the only words it understands.",
+    yeti: "The Pale Yeti is a legend among the Rimewatch: a white shape in the storm that takes sledges and leaves prints twice the size of a man's. It is not cruel, only territorial, and hungry in the way mountains are. The horns on its brow are gifts of age, one ring for every winter it has survived. It carries a staff of frozen pine that it uses more as a mark of its claim than as a weapon. Rimewatch patrols leave smoked fish at the edge of its range, and sometimes the fish is gone by morning. A fire at your back and a hard hit to the chest will send it away, for a season.",
+    rimecap: "Captain of the Frost Court's honor guard, he held the keep's yard against the thaw riots and was never relieved. Winter kept his body upright and his orders intact, and now he drills empty ranks in silence. His helm carries a plume of ice that never melts, whatever the hearths do. Soldiers who served under him say he never raised his voice, and that was the most frightening thing about him. He still offers a salute before the first blow, out of habit. He fights as he commanded: with a lance, a sweeping cleave, and a ward of ice.",
+    tyrant: "No one in Frostmere knows what the Frost Tyrant was before it became a tyrant. It sleeps in the dungeon under the keep, a mountain of black ice the queen once chained to her will and has since forgotten how to release. The chains are still on it, rimed over and thick as tree trunks. Its roar sets avalanches loose in the next valley, and prisoners in the lower cells used to count the days by its breathing. Its body has outgrown the vault built to hold it, and cracks run up the walls like lightning. It remembers every name it was ever told to crush. Only fire has ever made it flinch.",
+    queen: "Hoarwen was the last queen of Frostmere. She bargained with the Hollow Crown to end a winter that would not stop, and learned too late that it only ended in her. Now she sits the Rime Throne and keeps her whole kingdom in a long, kind, final frost, because she cannot bear to remember warmth. Her crown is made of winter itself, and her wings are the broken windows of the keep. In her calmer moments she speaks to the empty court and apologizes to each chair in turn. She will not stop being a queen for anyone, but she may, in the end, be allowed to rest. Those who climb the Rime Spire must face the whole of her sorrow in one blow."
+  };
+  var BEH = {
+    slime: ["Attacks plainly and rarely hurts much.", "Slow to act, so your heroes usually move first."],
+    bat: ["Darts in fast and drains life with Leech.", "Fragile: one good hit often finishes it."],
+    wolf: ["Hits harder than its health suggests.", "Now and then it bares its teeth for a heavy Rend."],
+    wisp: ["Prefers to cast Flame from a distance.", "Feeds on fire, so use ice and wind instead."],
+    toad: ["Casts Frost more often than it strikes.", "Sturdy for its level: expect a longer fight."],
+    golem: ["Slow but heavy; Slam hurts a lot.", "High defense, so lightning and spells beat blades."],
+    greymaw: ["Fast for a wolf and stubborn when hurt.", "Often arrives with a Thornwolf at her side."],
+    sentinel: ["Holds its ground and never retreats.", "Alternates Slam with Guard Break in a slow rhythm."],
+    boss: ["Opens with claws and Ember Rain, then adds Crown Flare.", "Grows more dangerous when badly hurt.", "Absorbs fire: only ice and steel will do."],
+    frostbat: ["A quick flyer that drains life with Frost Bite.", "Shrugs off ice; fire and wind work best."],
+    snowwolf: ["Hits hard and often arrives in twos and threes.", "Resists ice; fire melts it quickest."],
+    frostwisp: ["A caster: its Frost hits for heavy damage.", "Absorbs ice, so use fire or lightning."],
+    icegolem: ["Very slow and very sturdy; Glacier Slam is brutal.", "Absorbs ice and cracks under fire or lightning."],
+    rimeknight: ["Strong lance blows, plus a Shield Sweep on everyone.", "Not fast: fire or lightning breaks it quickest."],
+    blizzwraith: ["Casts Blizzard on all heroes and Chill Touch on one.", "Fire wounds it, while wind barely moves it."],
+    glacier: ["Mixes crushing blows with Ice Spears on everyone.", "A long fight, so bring healing."],
+    yeti: ["Maul on one hero, Frenzy on the whole party.", "Huge health pool; fire does the most."],
+    rimecap: ["Lance, cleave and ice magic in one fighter.", "Cold Cleave hits everyone, so keep healing ready."],
+    tyrant: ["Four heavy skills, two of which hit everyone.", "Absorbs ice; bring fire and plenty of healing."],
+    queen: ["Changes pattern when her health drops to two thirds and one third.", "In the last phase she charges Absolute Zero: be ready to heal.", "Absorbs ice; fire and lightning are her weakness."]
+  };
+  var ZONE = {
+    plains: ["Vale of Ash plains", "Vale"],
+    forest: ["Vale of Ash woods", "Vale"],
+    cave1: ["Emberpeaks Cave 1F", "Cave"],
+    cave2: ["Cinder Hollow B2", "Cave"],
+    snow: ["Frostmere snowfields", "Frost"],
+    pines: ["Frostmere pine woods", "Frost"],
+    blizzard: ["Blizzard plateau", "Frost"],
+    keep: ["Rimekeep halls", "Frost"],
+    dungeon: ["Rimekeep dungeon", "Frost"],
+    spire: ["Rime Spire", "Frost"]
+  };
+  var HAB_EXTRA = {
+    greymaw: [["Vale plains and woods (rare, after Fenn's request)", "Vale"]],
+    sentinel: [["Cinder Hollow B2, western chamber", "Cave"]],
+    boss: [["Cinder Hollow B2, the throne", "Cave"]],
+    glacier: [["Frostmere, Sunken Shrine", "Frost"]],
+    yeti: [["Blizzard plateau (rare)", "Frost"]],
+    rimecap: [["Rimekeep, Hall of Kings", "Frost"]],
+    tyrant: [["Rimekeep dungeon, the lowest vault", "Frost"]],
+    queen: [["Top of the Rime Spire", "Frost"]]
+  };
+  var SKDESC = {
+    Leech: "Bites and drains life to heal itself.",
+    Rend: "A tearing bite on one hero.",
+    Flame: "A bolt of fire on one hero.",
+    Frost: "A shard of ice on one hero.",
+    Slam: "A crushing blow on one hero.",
+    "Guard Break": "A heavy blow meant to crack a hero's guard.",
+    "Frost Bite": "Icy fangs that drain life.",
+    "Glacier Slam": "A crushing ice-hard blow on one hero.",
+    "Frost Lance": "A lance thrust wrapped in cold.",
+    "Shield Sweep": "Sweeps a shield across the whole party.",
+    Blizzard: "A howling ice storm on the whole party.",
+    "Chill Touch": "A freezing touch of ice magic on one hero.",
+    "Ice Spears": "Icicles rain down on the whole party.",
+    Maul: "A savage mauling of one hero.",
+    Frenzy: "Lashes out wildly at the whole party.",
+    "Cold Cleave": "A wide cleave across the whole party.",
+    "Rime Ward": "A burst of frost magic from behind its ward.",
+    "Glacier Crush": "A colossal crushing blow on one hero.",
+    Avalanche: "A wall of ice and rock on everyone.",
+    Permafrost: "Heavy ice magic that chills one hero to the bone.",
+    "Deep Chill": "A creeping cold that bites the whole party.",
+    "Grave Claw": "A raking claw on one hero.",
+    "Ember Rain": "Falling embers on the whole party.",
+    "Hollow Gaze": "A withering stare of pure magic.",
+    "Crown Flare": "A blast of crown-fire, his strongest spell.",
+    "Regal Sweep": "A sweeping blow across the whole party.",
+    "Frost Claw": "A raking claw of ice on one hero.",
+    "Icicle Volley": "Hurled icicles on one hero.",
+    "Rime Breath": "A freezing breath across the whole party.",
+    "Glacial Spear": "A spear of ice thrust through one hero.",
+    "Cold Embrace": "A chilling hug that drains life.",
+    "Absolute Zero is coming...": "She gathers all warmth; a huge spell follows.",
+    "Absolute Zero": "Her deadliest spell, a cold that hits everyone.",
+    "Crown Sweep": "A sweeping blow across the whole party."
   };
   var TYPE_DESC = { phys: "physical hit", physAll: "physical, hits all", mag: "magic", magAll: "magic, hits all", drainP: "drains life", charge: "charges a big attack", heal: "heals", drainM: "drains magic" };
   function skillList(e) {
     var out = [], seen = {};
-    function add(s) {
+    function add(s, boss) {
       if (!s || seen[s.name]) return;
       seen[s.name] = 1;
       var d = TYPE_DESC[s.type] || s.type;
       if (s.elem && s.elem !== "none" && (s.type === "mag" || s.type === "magAll")) d = s.elem + " " + d;
-      out.push({ name: s.name, desc: d });
+      out.push({ name: s.name, desc: d, type: s.type, elem: s.elem && s.elem !== "none" ? s.elem : "", rate: s.rate || 0, boss: !!boss, text: SKDESC[s.name] || "A " + d + " attack." });
     }
-    (e.skills || []).forEach(add);
+    (e.skills || []).forEach(function(s) {
+      add(s, false);
+    });
     if (e.boss) {
       var BS = CORE.BOSS_SKILLS, pats = e.pats ? [].concat.apply([], e.pats) : [].concat(CORE.BOSS_PATTERN_A, CORE.BOSS_PATTERN_B);
       pats.forEach(function(k) {
-        add(BS[k]);
+        add(BS[k], true);
       });
     }
     return out;
@@ -24724,12 +25387,54 @@ var Bestiary = (function() {
   function isFrost(id) {
     return typeof FROST_ENEMIES !== "undefined" && !!FROST_ENEMIES[id];
   }
+  B.habitat = function(id) {
+    var out = [], seen = {}, F = CORE.FORMATIONS || {};
+    Object.keys(F).forEach(function(z) {
+      if (ZONE[z] && F[z].some(function(f) {
+        return f.indexOf(id) >= 0;
+      }) && !seen[z]) {
+        seen[z] = 1;
+        out.push({ name: ZONE[z][0], group: ZONE[z][1] });
+      }
+    });
+    (HAB_EXTRA[id] || []).forEach(function(a) {
+      out.push({ name: a[0], group: a[1] });
+    });
+    if (!out.length) out.push({ name: "Unknown", group: isFrost(id) ? "Frost" : "Vale" });
+    return out;
+  };
+  B.behavior = function(id) {
+    return BEH[id] || [];
+  };
+  var AREA_ORDER = { Vale: 0, Cave: 1, Frost: 2 }, ELEM_ORDER = { fire: 0, ice: 1, bolt: 2, wind: 3 };
   var cache = null;
   B.entries = function() {
     if (cache && cache.n === Object.keys(CORE.ENEMIES).length) return cache.list;
     var list = Object.keys(CORE.ENEMIES).map(function(id) {
-      var e = CORE.ENEMIES[id];
-      return { id, e, name: e.name, power: B.power(e), tag: e.boss ? "BOSS" : e.rare ? "RARE" : isFrost(id) ? "ICE" : "", ice: isFrost(id) };
+      var e = CORE.ENEMIES[id], hab = B.habitat(id), groups = {};
+      hab.forEach(function(h) {
+        groups[h.group] = 1;
+      });
+      return {
+        id,
+        e,
+        name: e.name,
+        power: B.power(e),
+        tag: e.boss ? "BOSS" : e.rare ? "RARE" : isFrost(id) ? "ICE" : "",
+        ice: isFrost(id),
+        hab,
+        groups,
+        area: Math.min.apply(null, hab.map(function(h) {
+          return AREA_ORDER[h.group] || 0;
+        })),
+        elem: e.weak && e.weak.length ? ELEM_ORDER[e.weak[0]] === void 0 ? 9 : ELEM_ORDER[e.weak[0]] : 9,
+        rank: 0
+      };
+    });
+    list.slice().sort(function(a, b) {
+      return b.power - a.power || a.name.localeCompare(b.name);
+    }).forEach(function(r, i) {
+      r.rank = i + 1;
     });
     cache = { n: list.length, list };
     var mx = {};
@@ -24745,15 +25450,197 @@ var Bestiary = (function() {
     return list;
   };
   B.sorted = function(strongestFirst) {
-    var l = B.entries().slice().sort(function(a, b) {
+    return B.entries().slice().sort(function(a, b) {
       return strongestFirst ? b.power - a.power || a.name.localeCompare(b.name) : a.power - b.power || a.name.localeCompare(b.name);
     });
-    return l;
+  };
+  var SORTS = [["power", "Power", ["Strongest", "Weakest"]], ["area", "Area", ["Vale>Frost", "Frost>Vale"]], ["elem", "Element", ["Fire>Wind", "Wind>Fire"]], ["level", "Level", ["Highest", "Lowest"]], ["name", "Name", ["A-Z", "Z-A"]]];
+  B.SORTS = SORTS;
+  function cmp(key, dir) {
+    return function(a, b) {
+      var d = 0;
+      if (key === "power") d = b.power - a.power;
+      else if (key === "area") d = a.area - b.area;
+      else if (key === "elem") d = a.elem - b.elem;
+      else if (key === "level") d = b.e.lvl - a.e.lvl;
+      else if (key === "name") d = a.name.localeCompare(b.name);
+      if (d === 0) d = b.power - a.power;
+      if (d === 0) d = a.name.localeCompare(b.name);
+      return dir > 0 ? d : key === "power" || key === "level" || true ? -d : d;
+    };
+  }
+  var FILTERS = [["all", "All"], ["boss", "Bosses"], ["rare", "Rare"], ["common", "Common"], ["Vale", "Vale"], ["Cave", "Cave"], ["Frost", "Frostmere"], ["w:fire", "Weak fire"], ["w:ice", "Weak ice"], ["w:bolt", "Weak bolt"], ["w:wind", "Weak wind"]];
+  B.FILTERS = FILTERS;
+  function passes(r, f) {
+    if (f === "all") return true;
+    if (f === "boss") return r.tag === "BOSS";
+    if (f === "rare") return r.tag === "RARE";
+    if (f === "common") return !r.e.boss && !r.e.rare;
+    if (f.indexOf("w:") === 0) return (r.e.weak || []).indexOf(f.slice(2)) >= 0;
+    return !!r.groups[f];
+  }
+  B.query = function(sortKey, dir, filter) {
+    return B.entries().filter(function(r) {
+      return passes(r, filter || "all");
+    }).sort(cmp(sortKey || "power", dir || 1));
   };
   B.lore = function(id) {
     return LORE[id] || "Little is written about this creature. Travelers who have met it agree on one thing: it is best met with a full party and a plan.";
   };
-  var thumbs = {};
+  var Dex = (function() {
+    var KEY = "emberfall_bestiary_v1", D = null;
+    function fresh() {
+      return { v: 1, reveal: true, seen: {}, def: {} };
+    }
+    function load() {
+      if (D) return D;
+      var raw = null;
+      try {
+        raw = Store.get(KEY);
+      } catch (e) {
+      }
+      if (raw == null) {
+        try {
+          raw = window.sessionStorage.getItem(KEY);
+        } catch (e) {
+        }
+      }
+      var o = null;
+      try {
+        o = raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        o = null;
+      }
+      if (!o || typeof o !== "object" || o.v !== 1 || typeof o.seen !== "object" || typeof o.def !== "object") o = fresh();
+      if (typeof o.reveal !== "boolean") o.reveal = true;
+      return D = o;
+    }
+    function save() {
+      var s = JSON.stringify(D), ok = false;
+      try {
+        ok = Store.set(KEY, s);
+      } catch (e) {
+      }
+      if (!ok) {
+        try {
+          window.sessionStorage.setItem(KEY, s);
+        } catch (e) {
+        }
+      }
+    }
+    var X = { KEY };
+    X.data = load;
+    X.reload = function() {
+      D = null;
+      return load();
+    };
+    X.seen = function(id) {
+      return load().seen[id] || 0;
+    };
+    X.defeated = function(id) {
+      return load().def[id] || 0;
+    };
+    X.reveal = function() {
+      return load().reveal;
+    };
+    X.setReveal = function(v) {
+      load().reveal = !!v;
+      save();
+    };
+    X.known = function(id) {
+      var d = load();
+      return d.reveal || (d.seen[id] || 0) > 0 || (d.def[id] || 0) > 0;
+    };
+    X.found = function() {
+      var d = load(), n = 0;
+      Object.keys(CORE.ENEMIES).forEach(function(id) {
+        if ((d.seen[id] || 0) > 0 || (d.def[id] || 0) > 0) n++;
+      });
+      return n;
+    };
+    X.addSeen = function(id) {
+      var d = load();
+      d.seen[id] = (d.seen[id] || 0) + 1;
+      save();
+    };
+    X.addDefeated = function(id) {
+      var d = load();
+      d.def[id] = (d.def[id] || 0) + 1;
+      save();
+    };
+    X.reset = function() {
+      D = fresh();
+      save();
+    };
+    X.watch = function(b) {
+      if (!b || typeof b.update !== "function" || b.__dex) return;
+      b.__dex = 1;
+      if (typeof Autosave !== "undefined" && Autosave && Autosave.hold) return;
+      var upd = b.update, first = true, prev = null;
+      b.update = function() {
+        var ph0 = b.phase, en0 = first ? (b.enemies || []).map(function(e) {
+          return !!e.alive;
+        }) : null;
+        var r = upd.apply(this, arguments);
+        try {
+          if (first) {
+            first = false;
+            prev = en0;
+            if (ph0 === "intro") {
+              var u = {};
+              (b.enemies || []).forEach(function(e) {
+                if (!u[e.id]) {
+                  u[e.id] = 1;
+                  X.addSeen(e.id);
+                }
+              });
+            }
+          } else if (prev) (b.enemies || []).forEach(function(e, i) {
+            if (prev[i] && !e.alive) {
+              prev[i] = false;
+              X.addDefeated(e.id);
+            }
+          });
+        } catch (err) {
+        }
+        return r;
+      };
+    };
+    return X;
+  })();
+  B.Dex = Dex;
+  var ICONS = {
+    fire: [["...o...", "..oo...", ".ooyo..", ".oyyoo.", "ooyyyoo", "oyyyyyo", ".ooooo."], { o: "#ff7030", y: "#ffd860" }],
+    ice: [["...w...", ".w.w.w.", "..www..", "wwwcwww", "..www..", ".w.w.w.", "...w..."], { w: "#cfeeff", c: "#60c8ff" }],
+    bolt: [["...yy..", "..yy...", ".yyyy..", "...yy..", "..yy...", ".yy....", "y......"], { y: "#ffe060" }],
+    wind: [[".gggg..", "g....g.", "ggggg..", ".....g.", "..gggg.", ".g.....", "ggg...."], { g: "#a0f0b0" }],
+    phys: [[".....ww", "....www", "...www.", "w.www..", ".www...", "..w....", ".b....."], { w: "#e8ecff", b: "#c08040" }],
+    mag: [["...p...", "..ppp..", ".pwwwp.", "ppwwwpp", ".pwwwp.", "..ppp..", "...p..."], { p: "#c080ff", w: "#f0d8ff" }],
+    drain: [[".rr.rr.", "rRRrRRr", "rRRRRRr", "rRRRRRr", ".rRRRr.", "..rRr..", "...r..."], { r: "#c02040", R: "#ff6080" }],
+    charge: [["...y...", "..yyy..", ".yyyyy.", "...y...", "...y...", "..yyy..", "...y..."], { y: "#ffb050" }]
+  };
+  var iconC = {};
+  function icon(k) {
+    if (iconC[k]) return iconC[k];
+    var d = ICONS[k] || ICONS.phys, c = document.createElement("canvas");
+    c.width = 7;
+    c.height = 7;
+    var x = c.getContext("2d");
+    d[0].forEach(function(row, y) {
+      for (var i = 0; i < 7; i++) {
+        var ch = row[i];
+        if (ch !== "." && d[1][ch]) {
+          x.fillStyle = d[1][ch];
+          x.fillRect(i, y, 1, 1);
+        }
+      }
+    });
+    return iconC[k] = c;
+  }
+  function skillIcon(s) {
+    return s.elem && ICONS[s.elem] ? s.elem : s.type === "drainP" || s.type === "drainM" ? "drain" : s.type === "charge" ? "charge" : s.type === "mag" || s.type === "magAll" ? "mag" : "phys";
+  }
+  var thumbs = {}, sils = {};
   function thumb(id) {
     if (thumbs[id]) return thumbs[id];
     var s = enemySprite(id, 0), c = document.createElement("canvas");
@@ -24768,67 +25655,147 @@ var Bestiary = (function() {
     x.drawImage(s, 0, 0, s.width, s.height, Math.round((34 - w) / 2), 26 - h, w, h);
     return thumbs[id] = c;
   }
+  function silhouette(id) {
+    if (sils[id]) return sils[id];
+    var s = enemySprite(id, 0), c = document.createElement("canvas");
+    c.width = s.width;
+    c.height = s.height;
+    var x = c.getContext("2d");
+    x.drawImage(s, 0, 0);
+    x.globalCompositeOperation = "source-in";
+    x.fillStyle = "#1c2250";
+    x.fillRect(0, 0, c.width, c.height);
+    return sils[id] = c;
+  }
+  var sthumbs = {};
+  function sthumb(id) {
+    if (sthumbs[id]) return sthumbs[id];
+    var s = silhouette(id), c = document.createElement("canvas");
+    c.width = 34;
+    c.height = 26;
+    var x = c.getContext("2d"), k = Math.min(34 / s.width, 26 / s.height, 1), w = Math.max(1, Math.round(s.width * k)), h = Math.max(1, Math.round(s.height * k));
+    x.imageSmoothingEnabled = true;
+    x.drawImage(s, 0, 0, s.width, s.height, Math.round((34 - w) / 2), 26 - h, w, h);
+    return sthumbs[id] = c;
+  }
   function itemName(id) {
     var i = CORE.ITEMS && CORE.ITEMS[id];
     return i ? i.name : id;
   }
-  function elemLine(label, arr) {
-    return { label, text: arr && arr.length ? arr.join(", ") : "none", has: !!(arr && arr.length) };
+  function known(id) {
+    return Dex.known(id);
   }
-  function buildDetail(r, rank, total, cw) {
-    var e = r.e, ops = [], y = 0, mx = cache.max, cpl = Math.floor(cw / 6);
+  var GROUP_BG = { Vale: ["#15261f", "#0a140f"], Cave: ["#2a1a18", "#120a08"], Frost: ["#16304c", "#081222"] };
+  function buildDetail(r, rank, total, cw, viewH) {
+    var e = r.e, ops = [], y = 0, mx = cache.max, IN = 6, cpl = Math.floor((cw - 2 * IN) / 6), isK = known(r.id), panel = null;
     function text(s, x, col) {
-      ops.push({ t: "text", s, x, y, c: col });
+      ops.push({ t: "text", s, x: IN + x, y, c: col });
     }
-    function wrap(s, col, x) {
+    function wrap(s, col, x, ind) {
       wrapText(s, cpl - Math.floor((x || 0) / 6)).forEach(function(ln) {
         text(ln, x || 0, col);
         y += 10;
       });
     }
-    function head(s) {
+    function open(title) {
       y += 4;
-      ops.push({ t: "rule", y: y + 4, x: 0 });
-      text(s, 0, "#f8e080");
-      y += 12;
+      panel = { t: "panel", y, h: 0, title };
+      ops.push(panel);
+      y += 14;
     }
-    ops.push({ t: "sprite", y, h: 108 });
-    y += 112;
-    var chips = "Lv " + e.lvl + (r.tag ? "   " + r.tag : "") + (r.ice && r.tag !== "ICE" ? "   ICE" : "");
-    text(chips, 0, r.tag === "BOSS" ? "#ff9090" : r.tag === "RARE" ? "#ffd870" : "#a8c8ff");
-    y += 12;
+    function close() {
+      panel.h = y - panel.y + 3;
+      y += 7;
+      panel = null;
+    }
+    var spr = enemySprite(r.id, 0), boxMax = Math.max(112, Math.min(212, viewH - 12)), k = Math.max(1, Math.min(5, Math.floor(Math.min((cw - 20) / spr.width, (boxMax - 18) / spr.height))));
+    var boxH = Math.max(112, spr.height * k + 18);
+    ops.push({ t: "sprite", y, h: boxH, k });
+    y += boxH + 6;
+    if (!isK) {
+      open("UNKNOWN");
+      text("???", 0, "#8890b8");
+      y += 12;
+      wrap("You have not met this monster yet. Meet it in battle to record it, or turn Reveal all on (R) in the list.", "#a8b0d8", 0);
+      text("Seen 0   Defeated 0", 0, "#6870a0");
+      y += 10;
+      close();
+      return { ops, h: y + 4 };
+    }
+    var cx = 0;
+    function chip(s, col, bg) {
+      ops.push({ t: "chip", s, x: IN + cx, y, c: col, bg });
+      cx += s.length * 6 + 12;
+    }
+    chip("Lv " + e.lvl, "#ffffff", "#2a3a7a");
+    if (r.tag) chip(r.tag, r.tag === "BOSS" ? "#ffb0b0" : r.tag === "RARE" ? "#ffe090" : "#b0e8ff", r.tag === "BOSS" ? "#702028" : r.tag === "RARE" ? "#6a5018" : "#1a4a70");
+    if (r.ice && r.tag !== "ICE") chip("ICE", "#b0e8ff", "#1a4a70");
+    y += 15;
     text("POWER " + r.power + "   RANK " + rank + "/" + total, 0, "#ffffff");
-    y += 4;
-    head("STATS");
-    [["HP", "mhp"], ["ATK", "atk"], ["MAG", "mag"], ["DEF", "def"], ["MDEF", "mdef"], ["SPD", "spd"]].forEach(function(p) {
-      var v = e[p[1]] || 0;
-      text(p[0], 0, "#c8d0f0");
-      text(String(v), 38, "#ffffff");
-      ops.push({ t: "bar", x: 76, y: y + 1, w: cw - 76, f: v / (mx[p[1]] || 1), c: p[1] === "mhp" ? "#60d070" : p[1] === "spd" ? "#70c8ff" : p[1] === "def" || p[1] === "mdef" ? "#a0a8d0" : "#ff7a60" });
-      y += 11;
-    });
-    head("ELEMENTS");
-    [elemLine("Weak", e.weak), elemLine("Resists", e.resist), elemLine("Absorbs", e.absorb)].forEach(function(l, i) {
-      text(l.label, 0, "#c8d0f0");
-      text(l.text, 54, l.has ? i === 0 ? "#ffb070" : i === 1 ? "#90b0ff" : "#80ffa0" : "#7880a0");
+    y += 11;
+    text("SEEN " + Dex.seen(r.id) + "   DEFEATED " + Dex.defeated(r.id), 0, Dex.seen(r.id) || Dex.defeated(r.id) ? "#80f0a0" : "#7880a0");
+    y += 8;
+    open("HABITAT");
+    r.hab.forEach(function(h) {
+      ops.push({ t: "text", s: h.name, x: IN + 10, y, c: "#d8e0ff" });
+      ops.push({ t: "dot", x: IN + 2, y: y + 2, c: h.group === "Frost" ? "#80d8ff" : h.group === "Cave" ? "#ff9060" : "#80e090" });
       y += 10;
     });
-    head("SKILLS");
+    text("Level range", 0, "#c8d0f0");
+    text("Foe Lv " + e.lvl + "  (party Lv " + Math.max(1, e.lvl - 2) + "-" + (e.lvl + 2) + ")", 66, "#ffffff");
+    y += 10;
+    close();
+    open("STATS");
+    var rows = [["HP", "mhp", "#60d070"], ["ATK", "atk", "#ff7a60"], ["MAG", "mag", "#c080ff"], ["DEF", "def", "#a0a8d0"], ["MDEF", "mdef", "#80a0e0"], ["SPD", "spd", "#70c8ff"]];
+    ops.push({ t: "radar", x: IN, y, h: 92, vals: rows.map(function(p) {
+      return Math.sqrt((e[p[1]] || 0) / (mx[p[1]] || 1));
+    }), labels: ["HP", "ATK", "MAG", "DEF", "MDF", "SPD"], c: r.tag === "BOSS" ? "#ff6050" : r.ice ? "#70c8ff" : "#f0c040" });
+    rows.forEach(function(p, i) {
+      var v = e[p[1]] || 0, yy = y + 4 + i * 14;
+      ops.push({ t: "text", s: p[0], x: IN + 108, y: yy, c: "#c8d0f0" });
+      ops.push({ t: "text", s: String(v), x: IN + 108 + 26, y: yy, c: "#ffffff" });
+      ops.push({ t: "bar", x: IN + 108, y: yy + 8, w: cw - 2 * IN - 108, f: v / (mx[p[1]] || 1), c: p[2] });
+    });
+    y += 96;
+    close();
+    open("ELEMENTS");
+    [["Weak", e.weak, "#ffb070"], ["Resists", e.resist, "#90b0ff"], ["Absorbs", e.absorb, "#80ffa0"]].forEach(function(l) {
+      text(l.label || l[0], 0, "#c8d0f0");
+      ops.push({ t: "elems", x: IN + 54, y: y - 1, list: l[1] || [], c: l[2] });
+      y += 12;
+    });
+    close();
+    open("SKILLS");
     var sk = skillList(e);
     if (!sk.length) {
       text("Basic attacks only", 0, "#a8b0d8");
       y += 10;
     }
     sk.forEach(function(s) {
-      var line = s.name + " - " + s.desc;
-      wrap(line, "#d8e0ff", 0);
+      ops.push({ t: "icon", k: skillIcon(s), x: IN, y });
+      text(s.name, 10, s.elem ? ELEM_COL[s.elem] : "#ffffff");
+      var tail = s.rate ? Math.round(s.rate * 100) + "% of turns" : s.boss ? "in its pattern" : "";
+      if (tail) text(tail, cw - 2 * IN - tail.length * 6, "#8890b8");
+      y += 10;
+      wrap(s.text + " (" + s.desc + ")", "#a8b4dc", 10);
+      y += 2;
     });
     if (e.phases) {
       wrap("Changes tactics as its health falls (" + (e.phases.length + 1) + " phases).", "#ffb0b0", 0);
     } else if (e.boss) {
       wrap("Grows more dangerous when badly hurt.", "#ffb0b0", 0);
     }
-    head("REWARDS");
+    close();
+    open("BEHAVIOR");
+    B.behavior(r.id).forEach(function(l) {
+      ops.push({ t: "dot", x: IN + 2, y: y + 2, c: "#f0c850" });
+      wrapText(l, cpl - 2).forEach(function(ln) {
+        text(ln, 10, "#d8e0ff");
+        y += 10;
+      });
+    });
+    close();
+    open("REWARDS");
     if (e.boss && !e.xp && !e.gold) {
       wrap("Story battle: no XP or gold, the victory is the prize.", "#d8e0ff", 0);
     } else {
@@ -24841,17 +25808,25 @@ var Bestiary = (function() {
     if (e.steal) {
       text("Steal", 0, "#c8d0f0");
       text(itemName(e.steal), 36, "#ffffff");
-      y += 10;
+      y += 11;
     }
     text("Drop", 0, "#c8d0f0");
-    text(e.drop ? itemName(e.drop) + " (" + Math.round((e.dropRate || 0) * 100) + " in 100)" : "none", 36, e.drop ? "#ffffff" : "#7880a0");
-    y += 10;
-    head("STORY");
+    if (e.drop) {
+      text(itemName(e.drop) + " (" + Math.round((e.dropRate || 0) * 100) + "%)", 36, "#ffffff");
+      ops.push({ t: "bar", x: IN + 36, y: y + 9, w: 90, f: e.dropRate || 0, c: "#f0c040" });
+      y += 14;
+    } else {
+      text("none", 36, "#7880a0");
+      y += 11;
+    }
+    close();
+    open("STORY");
     wrap(B.lore(r.id), "#d0d8f4", 0);
-    y += 4;
+    close();
     wrap("Power = sqrt(HP x (1 + (DEF + MDEF) / 60) x best of ATK or MAG x (1 + SPD / 40)), plus a little for each skill; bosses count extra.", "#6870a0", 0);
     return { ops, h: y + 4 };
   }
+  B.buildDetail = buildDetail;
   var listenersOn = false;
   function installListeners() {
     if (listenersOn) return;
@@ -24879,9 +25854,21 @@ var Bestiary = (function() {
         e.preventDefault();
       }
     }, { passive: false });
+    window.addEventListener("keydown", function(e) {
+      var s = top();
+      if (!s || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (!e.repeat) s.cycleSort(e.shiftKey ? -1 : 1);
+      } else if (e.key === "f" || e.key === "F") {
+        if (!e.repeat) s.cycleFilter(e.shiftKey ? -1 : 1);
+      } else if (e.key === "r" || e.key === "R") {
+        if (!e.repeat) s.toggleReveal();
+      }
+    });
   }
   B.Scene = function() {
-    var s = { name: "bestiary", overlay: true, t: 0, mode: "list", strongest: true, sel: 0, scroll: 0, dscroll: 0, drag: null, list: null, det: null, detId: null };
+    var s = { name: "bestiary", overlay: true, t: 0, mode: "list", strongest: true, sortKey: "power", filter: "all", sel: 0, scroll: 0, dscroll: 0, drag: null, list: null, det: null, detId: null, sig: "" };
     var PITCH = 30;
     function geo() {
       var h = Math.max(120, H - BOT - 8);
@@ -24889,14 +25876,15 @@ var Bestiary = (function() {
     }
     function listView() {
       var g = geo();
-      return { top: g.y + 40, bot: g.y + g.h - 18 };
+      return { top: g.y + 54, bot: g.y + g.h - 18 };
     }
     function detView() {
       var g = geo();
       return { top: g.y + 20, bot: g.y + g.h - 24 };
     }
-    function resort() {
-      s.list = B.sorted(s.strongest);
+    function requery() {
+      s.list = B.query(s.sortKey, s.strongest ? 1 : -1, s.filter);
+      if (s.sel >= s.list.length) s.sel = Math.max(0, s.list.length - 1);
     }
     function maxScroll() {
       if (s.mode === "list") {
@@ -24917,16 +25905,26 @@ var Bestiary = (function() {
       else if (y0 + PITCH > s.scroll + vh) s.scroll = y0 + PITCH - vh;
       clampScroll();
     }
+    function sigNow() {
+      return H + ":" + BOT + ":" + (Dex.reveal() ? 1 : 0);
+    }
+    function rebuildDetail() {
+      var r = s.list[s.sel];
+      if (!r) return;
+      var d = detView();
+      s.det = buildDetail(r, r.rank, cache.list.length, geo().w - 20, d.bot - d.top);
+      s.sig = sigNow();
+      clampScroll();
+    }
     function openDetail(i) {
+      if (!s.list.length) return;
       s.sel = Math.max(0, Math.min(s.list.length - 1, i));
       var r = s.list[s.sel];
       showSel();
-      var all = B.sorted(true), rank = 1;
-      for (var k = 0; k < all.length; k++) if (all[k].id === r.id) rank = k + 1;
       s.mode = "detail";
       s.detId = r.id;
       s.dscroll = 0;
-      s.det = buildDetail(r, rank, all.length, geo().w - 20);
+      rebuildDetail();
       Audio8.sfx("ok");
     }
     function toList() {
@@ -24946,14 +25944,51 @@ var Bestiary = (function() {
         close();
       }
     }
-    function toggleSort() {
+    function keepSel(fn) {
       var id = s.list[s.sel] && s.list[s.sel].id;
-      s.strongest = !s.strongest;
-      resort();
+      fn();
+      requery();
       for (var i = 0; i < s.list.length; i++) if (s.list[i].id === id) s.sel = i;
+      s.scroll = 0;
       showSel();
       Audio8.sfx("cursor");
     }
+    function toggleSort() {
+      keepSel(function() {
+        s.strongest = !s.strongest;
+      });
+    }
+    s.cycleSort = function(d) {
+      keepSel(function() {
+        var i = 0;
+        SORTS.forEach(function(p, k) {
+          if (p[0] === s.sortKey) i = k;
+        });
+        s.sortKey = SORTS[(i + (d || 1) + SORTS.length) % SORTS.length][0];
+      });
+      if (s.mode === "detail") {
+        s.mode = "list";
+        s.det = null;
+      }
+    };
+    s.cycleFilter = function(d) {
+      keepSel(function() {
+        var i = 0;
+        FILTERS.forEach(function(p, k) {
+          if (p[0] === s.filter) i = k;
+        });
+        s.filter = FILTERS[(i + (d || 1) + FILTERS.length) % FILTERS.length][0];
+      });
+      if (s.mode === "detail") {
+        s.mode = "list";
+        s.det = null;
+      }
+    };
+    s.toggleReveal = function() {
+      Dex.setReveal(!Dex.reveal());
+      Audio8.sfx("cursor");
+      if (s.mode === "detail") rebuildDetail();
+    };
     s.scrollBy = function(d) {
       if (s.mode === "list") s.scroll += d;
       else s.dscroll += d;
@@ -24961,6 +25996,7 @@ var Bestiary = (function() {
     };
     s.update = function(dt) {
       s.t += dt;
+      if (s.mode === "detail" && s.sig !== sigNow()) rebuildDetail();
       var hd = s.mode === "detail" ? Input.heldDir() : null;
       if (hd === "up" || hd === "down") {
         s.dscroll += (hd === "down" ? 1 : -1) * 110 * dt;
@@ -24970,11 +26006,11 @@ var Bestiary = (function() {
       var d = Input.dir();
       if (s.mode === "list") {
         var n = s.list.length;
-        if (d === "up") {
+        if (n && d === "up") {
           s.sel = (s.sel + n - 1) % n;
           showSel();
           Audio8.sfx("cursor");
-        } else if (d === "down") {
+        } else if (n && d === "down") {
           s.sel = (s.sel + 1) % n;
           showSel();
           Audio8.sfx("cursor");
@@ -25021,6 +26057,13 @@ var Bestiary = (function() {
       if (p[0] < 0) p = [D.lx, D.ly];
       s.tap(p[0], p[1]);
     };
+    function tbRects(g) {
+      var bw = Math.floor((g.w - 24) / 2), x0 = g.x + 10, x1 = g.x + 14 + bw, y0 = g.y + 20, y1 = g.y + 36;
+      return [{ k: "sort", x: x0, y: y0, w: bw, h: 14 }, { k: "order", x: x1, y: y0, w: bw, h: 14 }, { k: "filter", x: x0, y: y1, w: bw, h: 14 }, { k: "reveal", x: x1, y: y1, w: bw, h: 14 }];
+    }
+    s.tbRects = function() {
+      return tbRects(geo());
+    };
     s.tap = function(gx, gy) {
       var g = geo();
       if (gx < g.x || gx > g.x + g.w || gy < g.y || gy > g.y + g.h || inCloseBox(g, gx, gy)) {
@@ -25028,9 +26071,16 @@ var Bestiary = (function() {
         return;
       }
       if (s.mode === "list") {
-        if (gy >= g.y + 20 && gy < g.y + 36) {
-          toggleSort();
-          return;
+        var tb = tbRects(g);
+        for (var q = 0; q < tb.length; q++) {
+          var b = tb[q];
+          if (gx >= b.x && gx < b.x + b.w && gy >= b.y && gy < b.y + b.h) {
+            if (b.k === "sort") s.cycleSort(1);
+            else if (b.k === "order") toggleSort();
+            else if (b.k === "filter") s.cycleFilter(1);
+            else s.toggleReveal();
+            return;
+          }
         }
         var v = listView();
         if (gy < v.top || gy > v.bot) return;
@@ -25060,71 +26110,210 @@ var Bestiary = (function() {
       R(ctx, g.x + g.w - 6, top, 2, vh, "#141838");
       R(ctx, g.x + g.w - 6, ty, 2, th, "#f0c850");
     }
+    function btn(b, label, col, on) {
+      drawWindow(ctx, b.x, b.y, b.w, b.h);
+      if (on) R(ctx, b.x + 2, b.y + 2, b.w - 4, b.h - 4, "rgba(240,200,80,0.18)");
+      drawText(ctx, label, b.x + 5, b.y + 3, col);
+    }
+    function fit(str, n) {
+      return str.length > n ? str.slice(0, n) : str;
+    }
     function drawList(g) {
       drawText(ctx, "MONSTERS", g.x + 12, g.y + 8, "#f8e080");
-      drawText(ctx, String(s.list.length), g.x + 12 + 9 * 6, g.y + 8, "#8890b8");
+      drawText(ctx, Dex.found() + "/" + cache.list.length + " met", g.x + 12 + 9 * 6, g.y + 8, Dex.found() ? "#80f0a0" : "#8890b8");
       drawCloseBox(ctx, g);
-      var by = g.y + 21;
-      drawWindow(ctx, g.x + 10, by, g.w - 22, 14);
-      var lab = s.strongest ? "Strongest first  v" : "Weakest first  ^";
-      drawText(ctx, "Power: " + lab, g.x + 16, by + 3, "#c8e0ff");
-      drawText(ctx, "< >", g.x + g.w - 40, by + 3, "#8890b8");
+      var tb = tbRects(g), sk = SORTS.filter(function(p) {
+        return p[0] === s.sortKey;
+      })[0], fl = FILTERS.filter(function(p) {
+        return p[0] === s.filter;
+      })[0], nch = Math.floor((tb[0].w - 8) / 6);
+      btn(tb[0], fit("Sort: " + sk[1], nch), "#c8e0ff");
+      btn(tb[1], fit("Order: " + sk[2][s.strongest ? 0 : 1], nch), "#c8e0ff");
+      btn(tb[2], fit("Show: " + fl[1], nch), s.filter === "all" ? "#c8e0ff" : "#ffe090", s.filter !== "all");
+      btn(tb[3], fit("Reveal all: " + (Dex.reveal() ? "ON" : "OFF"), nch), Dex.reveal() ? "#90f0a8" : "#ffb0a0");
       var v = listView(), maxP = cache.maxPower;
       clipTo(g.x + 3, v.top, g.w - 6, v.bot - v.top);
+      if (!s.list.length) drawText(ctx, "No monsters match this filter.", g.x + 16, v.top + 14, "#8890b8");
       for (var i = 0; i < s.list.length; i++) {
         var r = s.list[i], ry = v.top + i * PITCH - Math.round(s.scroll);
         if (ry + PITCH < v.top || ry > v.bot) continue;
-        var sel = i === s.sel;
+        var sel = i === s.sel, kn = known(r.id);
         if (sel) {
           R(ctx, g.x + 6, ry, g.w - 16, PITCH - 2, "rgba(255,224,128,0.16)");
           R(ctx, g.x + 6, ry, g.w - 16, 1, "#f0c850");
           R(ctx, g.x + 6, ry + PITCH - 3, g.w - 16, 1, "#f0c850");
         }
-        var rank = s.strongest ? i + 1 : s.list.length - i;
-        drawText(ctx, "#" + rank, g.x + 9, ry + 8, sel ? "#ffe080" : "#7880a8");
+        drawText(ctx, "#" + r.rank, g.x + 9, ry + 8, sel ? "#ffe080" : "#7880a8");
         R(ctx, g.x + 28, ry + 1, 36, 26, "rgba(10,14,40,0.55)");
-        ctx.drawImage(thumb(r.id), g.x + 29, ry + 1);
-        drawText(ctx, r.name, g.x + 69, ry + 3, sel ? "#ffffff" : "#c8d0f0");
-        drawText(ctx, "Lv" + r.e.lvl + "  PWR " + r.power, g.x + 69, ry + 13, "#a0b0e0");
-        if (r.tag) drawText(ctx, r.tag, g.x + g.w - 14 - r.tag.length * 6, ry + 3, r.tag === "BOSS" ? "#ff8080" : r.tag === "RARE" ? "#ffd060" : "#80d8ff");
+        R(ctx, g.x + 28, ry + 1, 36, 1, "#2a3270");
+        R(ctx, g.x + 28, ry + 26, 36, 1, "#2a3270");
+        ctx.drawImage(kn ? thumb(r.id) : sthumb(r.id), g.x + 29, ry + 1);
+        drawText(ctx, kn ? r.name : "???", g.x + 69, ry + 3, sel ? "#ffffff" : kn ? "#c8d0f0" : "#7880a8");
+        drawText(ctx, kn ? "Lv" + r.e.lvl + "  PWR " + r.power : "Lv??  PWR ???", g.x + 69, ry + 13, kn ? "#a0b0e0" : "#6068a0");
+        if (kn && r.tag) drawText(ctx, r.tag, g.x + g.w - 14 - r.tag.length * 6, ry + 3, r.tag === "BOSS" ? "#ff8080" : r.tag === "RARE" ? "#ffd060" : "#80d8ff");
+        var sd = Dex.seen(r.id) + "/" + Dex.defeated(r.id);
+        if (kn) drawText(ctx, sd, g.x + g.w - 14 - sd.length * 6, ry + 13, Dex.seen(r.id) ? "#80f0a0" : "#5a628c");
         R(ctx, g.x + 69, ry + 23, g.w - 90, 2, "#141838");
-        R(ctx, g.x + 69, ry + 23, Math.max(2, Math.round((g.w - 90) * r.power / maxP)), 2, r.tag === "BOSS" ? "#ff6050" : r.ice ? "#70c8ff" : "#f0c040");
+        if (kn) R(ctx, g.x + 69, ry + 23, Math.max(2, Math.round((g.w - 90) * r.power / maxP)), 2, r.tag === "BOSS" ? "#ff6050" : r.ice ? "#70c8ff" : "#f0c040");
       }
       ctx.restore();
       drawScrollbar(g, v.top, v.bot, s.list.length * PITCH, s.scroll);
-      drawText(ctx, "Tap/Z: details  Drag: scroll  X: back", g.x + 12, g.y + g.h - 14, "#8890b8");
+      var touch = document.body && document.body.classList.contains("touch");
+      drawText(ctx, touch ? "Tap: open  Drag: scroll  seen/defeated" : "Z open  F filter  Tab sort  R reveal", g.x + 12, g.y + g.h - 14, "#8890b8");
+    }
+    function frame(x, y, w, h, col) {
+      R(ctx, x, y, w, 1, "#04061a");
+      R(ctx, x, y + h - 1, w, 1, "#04061a");
+      R(ctx, x, y, 1, h, "#04061a");
+      R(ctx, x + w - 1, y, 1, h, "#04061a");
+      R(ctx, x + 1, y + 1, w - 2, 1, col);
+      R(ctx, x + 1, y + h - 2, w - 2, 1, col);
+      R(ctx, x + 1, y + 1, 1, h - 2, col);
+      R(ctx, x + w - 2, y + 1, 1, h - 2, col);
+      ctx.globalAlpha = 0.35;
+      R(ctx, x + 2, y + 2, w - 4, 1, "#ffffff");
+      ctx.globalAlpha = 1;
+      [[x, y], [x + w - 3, y], [x, y + h - 3], [x + w - 3, y + h - 3]].forEach(function(p) {
+        R(ctx, p[0], p[1], 3, 3, "#f0c850");
+        R(ctx, p[0] + 1, p[1] + 1, 1, 1, "#fff4c0");
+      });
+    }
+    function drawSpriteBox(r, op, ox, y, bw, kn) {
+      var grp = r.groups.Frost ? "Frost" : r.groups.Cave ? "Cave" : "Vale", bg = GROUP_BG[grp], hh = op.h;
+      R(ctx, ox, y, bw, hh, bg[1]);
+      R(ctx, ox + 2, y + 2, bw - 4, Math.round(hh * 0.5), bg[0]);
+      R(ctx, ox + 2, y + 2 + Math.round(hh * 0.5), bw - 4, hh - 4 - Math.round(hh * 0.5), bg[1]);
+      var i, t = s.t;
+      for (i = 0; i < 9; i++) {
+        var q = (t * (0.1 + 0.05 * (i % 3)) + i * 0.137) % 1, mxp = ox + 4 + Math.round(i * 53 % 97 / 97 * (bw - 8)) + Math.round(Math.sin(t * 1.1 + i) * 3), myp = grp === "Frost" ? y + 3 + Math.round(q * (hh - 6)) : y + hh - 4 - Math.round(q * (hh - 8));
+        ctx.globalAlpha = Math.sin(q * Math.PI) * 0.7;
+        R(ctx, mxp, myp, 1, 1, grp === "Frost" ? "#e8fbff" : grp === "Cave" ? "#ff9050" : "#d8ffb0");
+      }
+      ctx.globalAlpha = 1;
+      var spr = enemySprite(r.id, 0), w = spr.width * op.k, h = spr.height * op.k, fx = ox + Math.round((bw - w) / 2), fy = y + hh - 9 - h;
+      R(ctx, fx + Math.round(w * 0.06), y + hh - 11, Math.round(w * 0.88), 4, "rgba(0,0,0,0.38)");
+      R(ctx, fx + Math.round(w * 0.16), y + hh - 10, Math.round(w * 0.68), 2, "rgba(0,0,0,0.3)");
+      if (kn) {
+        if (typeof MONX !== "undefined" && MONX.draw) MONX.draw(ctx, r.id, s.t, fx, fy, op.k);
+        else ctx.drawImage(enemySprite(r.id, Math.floor(s.t * 2.2) % 2), fx, fy, w, h);
+      } else {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(silhouette(r.id), fx, fy, w, h);
+        drawText(ctx, "?", ox + Math.round(bw / 2) - 3, y + 6, "#4a5290");
+      }
+      frame(ox, y, bw, hh, r.tag === "BOSS" ? "#c04838" : r.tag === "RARE" ? "#b8902c" : r.ice ? "#4a90c0" : "#5a68b8");
+    }
+    function drawRadar(op, ox, y, cw) {
+      var cx = ox + op.x + 50, cy = y + 46, rad = 30, n = 6, a0 = -Math.PI / 2, i, j;
+      function pt(i2, f) {
+        var a = a0 + i2 * Math.PI * 2 / n;
+        return [cx + Math.cos(a) * rad * f, cy + Math.sin(a) * rad * f];
+      }
+      ctx.lineWidth = 1;
+      [0.34, 0.67, 1].forEach(function(f, k) {
+        ctx.strokeStyle = k === 2 ? "#3a4690" : "#252e68";
+        ctx.beginPath();
+        for (j = 0; j < n; j++) {
+          var p = pt(j, f);
+          if (j) ctx.lineTo(p[0], p[1]);
+          else ctx.moveTo(p[0], p[1]);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      });
+      ctx.strokeStyle = "#252e68";
+      ctx.beginPath();
+      for (i = 0; i < n; i++) {
+        var e = pt(i, 1);
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(e[0], e[1]);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      for (i = 0; i < n; i++) {
+        var q = pt(i, Math.max(0.06, op.vals[i]));
+        if (i) ctx.lineTo(q[0], q[1]);
+        else ctx.moveTo(q[0], q[1]);
+      }
+      ctx.closePath();
+      ctx.globalAlpha = 0.32;
+      ctx.fillStyle = op.c;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = op.c;
+      ctx.stroke();
+      for (i = 0; i < n; i++) {
+        var d = pt(i, Math.max(0.06, op.vals[i]));
+        R(ctx, Math.round(d[0]) - 1, Math.round(d[1]) - 1, 3, 3, "#ffffff");
+        var lp = pt(i, 1.32);
+        drawText(ctx, op.labels[i], Math.round(lp[0]) - op.labels[i].length * 3, Math.round(lp[1]) - 3, "#8890c8");
+      }
     }
     function drawDetail(g) {
       var r = s.list[s.sel], D = s.det;
       if (!D) return;
-      drawText(ctx, r.name, g.x + 12, g.y + 8, "#f8e080");
+      var kn = known(r.id);
+      drawText(ctx, kn ? r.name : "???", g.x + 12, g.y + 8, "#f8e080");
       drawCloseBox(ctx, g);
-      var v = detView(), ox = g.x + 10, sc = Math.round(s.dscroll);
+      var v = detView(), ox = g.x + 10, cw = g.w - 20, sc = Math.round(s.dscroll);
       clipTo(g.x + 3, v.top, g.w - 6, v.bot - v.top);
       D.ops.forEach(function(op) {
         var y = v.top + op.y - sc;
         if (op.t === "sprite") {
           if (y + op.h < v.top || y > v.bot) return;
-          var spr = enemySprite(r.id, Math.floor(s.t * 2.2) % 2), k = Math.max(1, Math.min(3, Math.floor(Math.min((g.w - 24) / spr.width, (op.h - 8) / spr.height))));
-          var bw = g.w - 20;
-          R(ctx, ox, y, bw, op.h, "#0a0e28");
-          R(ctx, ox, y, bw, 1, "#2a3270");
-          R(ctx, ox, y + op.h - 1, bw, 1, "#2a3270");
+          drawSpriteBox(r, op, ox, y, cw, kn);
+        } else if (op.t === "panel") {
+          if (y + op.h < v.top || y > v.bot) return;
+          R(ctx, ox, y, cw, op.h, "rgba(6,10,36,0.55)");
+          R(ctx, ox, y, cw, 1, "#2a3270");
+          R(ctx, ox, y + op.h - 1, cw, 1, "#2a3270");
           R(ctx, ox, y, 1, op.h, "#2a3270");
-          R(ctx, ox + bw - 1, y, 1, op.h, "#2a3270");
-          var w = spr.width * k, h = spr.height * k, fx = ox + Math.round((bw - w) / 2), fy = y + op.h - 8 - h;
-          ctx.fillStyle = "rgba(0,0,0,0.35)";
-          ctx.fillRect(fx + Math.round(w * 0.12), y + op.h - 9, Math.round(w * 0.76), 3);
-          ctx.drawImage(spr, 0, 0, spr.width, spr.height, fx, fy, w, h);
+          R(ctx, ox + cw - 1, y, 1, op.h, "#2a3270");
+          R(ctx, ox, y, 3, 3, "#f0c850");
+          R(ctx, ox + cw - 3, y, 3, 3, "#f0c850");
+          R(ctx, ox, y + op.h - 3, 3, 3, "#f0c850");
+          R(ctx, ox + cw - 3, y + op.h - 3, 3, 3, "#f0c850");
+          R(ctx, ox + 6, y + 4, 3, 3, "#f0c850");
+          R(ctx, ox + 7, y + 3, 1, 5, "#f0c850");
+          R(ctx, ox + 5, y + 5, 5, 1, "#f0c850");
+          drawText(ctx, op.title, ox + 14, y + 3, "#f8e080");
+          R(ctx, ox + 14 + op.title.length * 6 + 4, y + 6, cw - 14 - op.title.length * 6 - 10, 1, "#2a3270");
         } else if (op.t === "text") {
           if (y > v.top - 10 && y < v.bot) drawText(ctx, op.s, ox + op.x, y, op.c);
-        } else if (op.t === "rule") {
-          if (y > v.top - 2 && y < v.bot) R(ctx, ox, y, g.w - 20, 1, "#2a3270");
-        } else if (op.t === "bar") {
+        } else if (op.t === "chip") {
+          if (y > v.top - 14 && y < v.bot) {
+            var cwid = op.s.length * 6 + 8;
+            R(ctx, ox + op.x, y, cwid, 12, op.bg);
+            R(ctx, ox + op.x, y, cwid, 1, "rgba(255,255,255,0.35)");
+            R(ctx, ox + op.x, y + 11, cwid, 1, "rgba(0,0,0,0.4)");
+            drawText(ctx, op.s, ox + op.x + 4, y + 2, op.c);
+          }
+        } else if (op.t === "dot") {
           if (y > v.top - 4 && y < v.bot) {
+            R(ctx, ox + op.x, y, 3, 3, op.c);
+          }
+        } else if (op.t === "bar") {
+          if (y > v.top - 6 && y < v.bot) {
             R(ctx, ox + op.x, y, op.w, 5, "#141838");
             R(ctx, ox + op.x + 1, y + 1, Math.max(1, Math.round((op.w - 2) * Math.min(1, op.f))), 3, op.c);
+            R(ctx, ox + op.x + 1, y + 1, Math.max(1, Math.round((op.w - 2) * Math.min(1, op.f))), 1, "rgba(255,255,255,0.35)");
           }
+        } else if (op.t === "radar") {
+          if (y + op.h > v.top && y < v.bot) drawRadar(op, ox, y, cw);
+        } else if (op.t === "icon") {
+          if (y > v.top - 8 && y < v.bot) ctx.drawImage(icon(op.k), ox + op.x, y);
+        } else if (op.t === "elems") {
+          if (y < v.top - 10 || y > v.bot) return;
+          var xx = ox + op.x;
+          if (!op.list.length) {
+            drawText(ctx, "none", xx, y + 1, "#7880a0");
+            return;
+          }
+          op.list.forEach(function(el) {
+            ctx.drawImage(icon(el), xx, y);
+            drawText(ctx, el, xx + 10, y + 1, ELEM_COL[el] || op.c);
+            xx += 10 + el.length * 6 + 8;
+          });
         }
       });
       ctx.restore();
@@ -25139,6 +26328,7 @@ var Bestiary = (function() {
     }
     s.draw = function() {
       var g = geo();
+      if (s.mode === "detail" && s.sig !== sigNow()) rebuildDetail();
       clampScroll();
       ctx.globalAlpha = 0.6;
       R(ctx, 0, 0, W, H, "#000008");
@@ -25147,7 +26337,8 @@ var Bestiary = (function() {
       if (s.mode === "list") drawList(g);
       else drawDetail(g);
     };
-    resort();
+    B.entries();
+    requery();
     installListeners();
     return s;
   };
@@ -25159,6 +26350,17 @@ var Bestiary = (function() {
 function BestiaryScene() {
   return Bestiary.Scene();
 }
+(function() {
+  var _bs = BattleScene;
+  BattleScene = function() {
+    var b = _bs.apply(this, arguments);
+    try {
+      Bestiary.Dex.watch(b);
+    } catch (e) {
+    }
+    return b;
+  };
+})();
 
 // ---- perf.js ----
 var Prewarm = {
