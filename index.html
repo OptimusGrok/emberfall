@@ -18326,7 +18326,7 @@ Opts.load();
   }
 })();
 function OptionsScene(onClose) {
-  var s = { name: "options", overlay: true, i: 0, t: 0 }, ROWS = ["music", "sfx", "mute", "back"], X0 = 20, Y0 = 44, WW = 216, BAR = 90, PITCH = 24;
+  var s = { name: "options", overlay: true, i: 0, t: 0 }, ROWS = ["music", "sfx", "mute", "joy", "back"], X0 = 20, Y0 = 44, WW = 216, BAR = 90, PITCH = 24;
   function close() {
     Audio8.sfx("cancel");
     popScene();
@@ -18350,10 +18350,16 @@ function OptionsScene(onClose) {
       else if (row === "mute") {
         toggleMute();
         Audio8.sfx("cursor");
+      } else if (row === "joy") {
+        Joy.toggle();
+        Audio8.sfx("cursor");
       }
     }
     if (Input.pressed("a")) {
-      if (row === "mute") toggleMute();
+      if (row === "joy") {
+        Joy.toggle();
+        Audio8.sfx("cursor");
+      } else if (row === "mute") toggleMute();
       else if (row === "back") close();
       else Audio8.sfx("ok");
     }
@@ -18372,6 +18378,9 @@ function OptionsScene(onClose) {
     if (row === "back") close();
     else if (row === "mute") {
       toggleMute();
+      Audio8.sfx("cursor");
+    } else if (row === "joy") {
+      Joy.toggle();
       Audio8.sfx("cursor");
     } else {
       var bx = X0 + 84;
@@ -18401,6 +18410,9 @@ function OptionsScene(onClose) {
       } else if (row === "mute") {
         drawText(ctx, "Sound", X0 + 20, y, col);
         drawText(ctx, Audio8.muted ? "OFF (muted)" : "ON", X0 + 84, y, Audio8.muted ? "#ff9090" : "#90f090");
+      } else if (row === "joy") {
+        drawText(ctx, "Joystick", X0 + 20, y, col);
+        drawText(ctx, Joy.enabled() ? "ON" : "OFF", X0 + 84, y, Joy.enabled() ? "#90f090" : "#ff9090");
       } else drawText(ctx, "Back", X0 + 20, y, col);
     });
     drawText(ctx, "Left/Right: change   X/Esc: back", 128 - textWidth("Left/Right: change   X/Esc: back") / 2, Y0 + 34 + ROWS.length * PITCH - 12, "#7078a0");
@@ -18456,8 +18468,9 @@ var Tut = {
   },
   rect: function() {
     var l = this.text(), w = Math.max(textWidth(l[0]), textWidth(l[1])) + 20;
-    return [128 - w / 2, H - BOT - 40, w, 30];
+    return [128 - w / 2, H - BOT - 40 - Joy.lift(128 - w / 2, 128 + w / 2, 10), w, 30];
   },
+  // Joy.lift: nudged above the on-screen joystick when it would sit under the ring
   heroIn: function() {
     try {
       var r = this.rect(), g = field.heroGame();
@@ -18541,7 +18554,7 @@ var Doors = {
     if (t !== field || field.lock !== 0 || fade.a > 0.3 || Tut.visible()) return;
     var n = this.near();
     if (!n) return;
-    var s = this.text(n), w = textWidth(s) + 16, y = H - BOT - 24;
+    var s = this.text(n), w = textWidth(s) + 16, y = H - BOT - 24 - Joy.lift(128 - w / 2, 128 + w / 2, 6);
     drawWindow(ctx, 128 - w / 2, y, w, 18);
     drawText(ctx, s, 128 - w / 2 + 8, y + 5, "#f8e080");
   },
@@ -18736,6 +18749,438 @@ var DLG = {
       }
     });
   };
+})();
+
+// ---- joystick.js ----
+var Joy = {
+  KEY: "emberfall_joystick",
+  BASE: 44,
+  KNOB: 24,
+  SC: 2,
+  // logical pixels of the sprites, CSS px per logical px
+  PAD: 22,
+  // invisible hit padding (CSS px) on the left / top / right of the ring (none below: the pills sit there)
+  RT: 20,
+  // knob travel radius (CSS px)
+  DZ: 10,
+  DZ_HOLD: 8,
+  // dead zone radius (CSS px) to start moving / to keep moving
+  D_ON: 0.55,
+  D_OFF: 0.42,
+  // minor/major ratio to enter / leave a diagonal (cardinals get the wider cones)
+  el: null,
+  cb: null,
+  ck: null,
+  id: null,
+  cx: 0,
+  cy: 0,
+  kx: 0,
+  ky: 0,
+  want: { up: 0, down: 0, left: 0, right: 0 },
+  mine: {},
+  shown: false,
+  lit: false,
+  phase: 0,
+  dodge: false,
+  lastLay: 0,
+  lastShim: 0,
+  bx: 0,
+  by: 0,
+  ready: false,
+  _v: null,
+  isTouch: function() {
+    return !!(document.body && document.body.classList.contains("touch"));
+  },
+  enabled: function() {
+    if (this._v === null) {
+      var s = Store.get(this.KEY);
+      if (s === "1" || s === "0") this._v = s === "1";
+    }
+    return this._v === null ? this.isTouch() : this._v;
+  },
+  set: function(on) {
+    this._v = !!on;
+    Store.set(this.KEY, on ? "1" : "0");
+  },
+  toggle: function() {
+    this.set(!this.enabled());
+    return this.enabled();
+  },
+  // ---- pixel art ----
+  PAL_GOLD: ["#5a3a0c", "#a8741c", "#f0b830", "#ffe080", "#fff6c8"],
+  PAL_NAVY: ["#080d38", "#101a70", "#2a3ab8", "#4a5ad8", "#8a9af4"],
+  PAL_GEM: ["#0a2470", "#1c58c0", "#3a8ee8", "#7ad0ff", "#e0f8ff"],
+  BAY: [0, 2, 3, 1],
+  // 2x2 ordered dither
+  shade: function(pal, l, x, y, lo, hi) {
+    var n = pal.length - 1, v = (l * 0.5 + 0.5) * (hi - lo) + lo;
+    v += (this.BAY[(y & 1) * 2 + (x & 1)] - 1.5) / 4 * 0.9;
+    return pal[Math.max(0, Math.min(n, Math.round(v)))];
+  },
+  drawBase: function(c) {
+    var S = this.BASE, h = S / 2, x, y, G2 = this, g = c.getContext("2d");
+    g.clearRect(0, 0, S, S);
+    for (y = 0; y < S; y++) for (x = 0; x < S; x++) {
+      var dx = x + 0.5 - h, dy = y + 0.5 - h, r = Math.sqrt(dx * dx + dy * dy), col = null;
+      var l = r ? -(dx + dy) / (r * 1.4142) : 0;
+      if (r > h) continue;
+      if (r > 20.3) col = "#05071c";
+      else if (r > 17.9) {
+        var t = (r - 17.9) / 2.4;
+        col = G2.shade(G2.PAL_GOLD, l * (t > 0.5 ? 1 : -0.7), x, y, 0.8, 3.6);
+      } else if (r > 17.1) col = "#1a1030";
+      else if (r > 11.9) {
+        var u = (r - 11.9) / 5.2, up = u > 0.5;
+        col = G2.shade(G2.PAL_NAVY, l * (up ? 1 : -1) * 0.85 + (up ? 0.1 : -0.2), x, y, 0, 3.4);
+      } else if (r > 10.6) col = G2.shade(G2.PAL_GOLD, -l, x, y, 0.5, 3.2);
+      else {
+        var w = r / 10.6;
+        col = G2.shade(G2.PAL_NAVY, l * -0.9 - 1.1 + w * 0.4, x, y, 0, 2.2);
+      }
+      if (col) {
+        g.fillStyle = col;
+        g.fillRect(x, y, 1, 1);
+      }
+    }
+    function P(px, py, col2) {
+      g.fillStyle = col2;
+      g.fillRect(Math.floor(px), Math.floor(py), 1, 1);
+    }
+    var k, a, i;
+    for (k = 0; k < 4; k++) {
+      var ux = [0, 1, 0, -1][k], uy = [-1, 0, 1, 0][k];
+      for (i = 0; i < 2; i++) {
+        var o = i ? 0 : 1;
+        for (a = -2; a <= 1; a++) for (var dd = 14; dd <= 15; dd++) {
+          if (dd === 15 && (a < -1 || a > 0)) continue;
+          var al = ux > 0 || uy > 0 ? h + dd - 1 : h - dd, pp = h + a, tx = ux ? al : pp, ty = ux ? pp : al;
+          P(tx + o, ty + o, i ? dd === 15 ? "#fff0a0" : "#f0b830" : "#080d38");
+        }
+      }
+    }
+    for (k = 0; k < 4; k++) {
+      var sx = [1, 1, -1, -1][k], sy = [-1, 1, 1, -1][k], qx = h + sx * 10.2 - 1, qy = h + sy * 10.2 - 1;
+      P(qx + 1, qy + 1, "#5a3a0c");
+      P(qx + 1, qy, "#a8741c");
+      P(qx, qy + 1, "#a8741c");
+      P(qx, qy, "#fff0a0");
+    }
+    for (k = 0; k < 8; k++) {
+      a = (k + 0.5) * Math.PI / 4;
+      P(h + Math.cos(a) * 19.1, h + Math.sin(a) * 19.1, "#5a3a0c");
+    }
+  },
+  drawKnob: function(c, lit, ph) {
+    var S = this.KNOB, h = S / 2, G2 = this, g = c.getContext("2d"), x, y;
+    g.clearRect(0, 0, S, S);
+    for (y = 0; y < S; y++) for (x = 0; x < S; x++) {
+      var dx = x + 0.5 - h, dy = y + 0.5 - h, r = Math.sqrt(dx * dx + dy * dy), col = null, l = r ? -(dx + dy) / (r * 1.4142) : 0;
+      if (r > 11.9) continue;
+      if (r > 9.4) {
+        if (lit) {
+          var d = (G2.BAY[(y & 1) * 2 + (x & 1)] + 0.5) / 4, k = r < 10.6 ? 0.8 : 0.4;
+          if (d < k) col = r < 10.6 ? "#7ae8ff" : "#2a78c8";
+        }
+      } else if (r > 8.6) col = "#2a1604";
+      else if (r > 6.9) col = G2.shade(G2.PAL_GOLD, l, x, y, 0.6, 4.2);
+      else if (r > 6.2) col = "#0a1450";
+      else {
+        var an = Math.atan2(dy, dx), fi = Math.floor((an + Math.PI) / (2 * Math.PI) * 8), fa = (fi + 0.5) / 8 * 2 * Math.PI - Math.PI, fl = -(Math.cos(fa) + Math.sin(fa)) / 1.4142;
+        var lv = fl * 0.5 + 0.5;
+        if (r < 2.4) lv = 0.95;
+        else if (r < 4.2) lv = Math.min(1, lv + 0.2);
+        lv = lv * 3 + (lit ? 1 : 0.2);
+        col = G2.PAL_GEM[Math.max(0, Math.min(4, Math.round(lv)))];
+      }
+      if (col) {
+        g.fillStyle = col;
+        g.fillRect(x, y, 1, 1);
+      }
+    }
+    function P(px, py, col2) {
+      g.fillStyle = col2;
+      g.fillRect(px, py, 1, 1);
+    }
+    var m;
+    for (m = 0; m < 8; m++) {
+      var a = m * Math.PI / 4;
+      P(Math.floor(h + Math.cos(a) * 7.7), Math.floor(h + Math.sin(a) * 7.7), m % 2 ? "#fff6c8" : "#ffe080");
+    }
+    P(8, 8, "#ffffff");
+    P(9, 8, "#e0f8ff");
+    P(8, 9, "#e0f8ff");
+    if (ph) {
+      P(7, 8, "#ffffff");
+      P(10, 8, "#bfeaff");
+      P(8, 7, "#ffffff");
+      P(8, 10, "#bfeaff");
+    }
+  },
+  // ---- DOM ----
+  build: function() {
+    if (this.ready || !document.body) return;
+    this.ready = true;
+    var st = document.createElement("style"), P = this.PAD, S = this.BASE * this.SC, K = this.KNOB * this.SC;
+    st.textContent = "#joy{position:fixed;z-index:5;display:none;box-sizing:content-box;width:" + S + "px;height:" + S + "px;padding:" + P + "px " + P + "px 0 " + P + "px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;opacity:.4;transition:opacity .18s linear}#joy.on{opacity:1}#joy.dodge:not(.on){opacity:.14}#joy canvas{position:absolute;display:block;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none}#joyK{transition:transform .07s steps(2)}#joy.on #joyK{transition:none}";
+    document.head.appendChild(st);
+    var d = document.createElement("div");
+    d.id = "joy";
+    d.setAttribute("aria-hidden", "true");
+    var cb = document.createElement("canvas");
+    cb.id = "joyB";
+    cb.width = cb.height = this.BASE;
+    cb.style.cssText = "left:" + P + "px;top:" + P + "px;width:" + S + "px;height:" + S + "px";
+    var ck = document.createElement("canvas");
+    ck.id = "joyK";
+    ck.width = ck.height = this.KNOB;
+    ck.style.cssText = "left:" + (P + (S - K) / 2) + "px;top:" + (P + (S - K) / 2) + "px;width:" + K + "px;height:" + K + "px";
+    d.appendChild(cb);
+    d.appendChild(ck);
+    document.body.appendChild(d);
+    this.el = d;
+    this.cb = cb;
+    this.ck = ck;
+    this.drawBase(cb);
+    this.drawKnob(ck, false, 0);
+    var me = this;
+    if (HAS_POINTER) {
+      d.addEventListener("pointerdown", function(e) {
+        if (e.button > 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        me.down(e.pointerId, e.clientX, e.clientY);
+      });
+      window.addEventListener("pointermove", function(e) {
+        if (me.id === e.pointerId) me.move(e.clientX, e.clientY);
+      });
+      ["pointerup", "pointercancel"].forEach(function(n) {
+        window.addEventListener(n, function(e) {
+          if (me.id === e.pointerId) me.up();
+        });
+      });
+    } else {
+      d.addEventListener("touchstart", function(e) {
+        e.preventDefault();
+        var c = e.changedTouches[0];
+        me.down("t" + c.identifier, c.clientX, c.clientY);
+      }, { passive: false });
+      d.addEventListener("touchmove", function(e) {
+        e.preventDefault();
+        for (var i = 0; i < e.changedTouches.length; i++) {
+          var c = e.changedTouches[i];
+          if (me.id === "t" + c.identifier) me.move(c.clientX, c.clientY);
+        }
+      }, { passive: false });
+      ["touchend", "touchcancel"].forEach(function(n) {
+        d.addEventListener(n, function(e) {
+          for (var i = 0; i < e.changedTouches.length; i++) if (me.id === "t" + e.changedTouches[i].identifier) me.up();
+        });
+      });
+      d.addEventListener("mousedown", function(e) {
+        e.preventDefault();
+        me.down("m", e.clientX, e.clientY);
+      });
+      window.addEventListener("mousemove", function(e) {
+        if (me.id === "m") me.move(e.clientX, e.clientY);
+      });
+      window.addEventListener("mouseup", function() {
+        if (me.id === "m") me.up();
+      });
+    }
+    window.addEventListener("blur", function() {
+      me.up();
+    });
+    window.addEventListener("resize", function() {
+      me.lastLay = 0;
+    });
+    window.addEventListener("orientationchange", function() {
+      me.lastLay = 0;
+    });
+  },
+  // ---- gesture ----
+  down: function(id, x, y) {
+    if (this.id !== null) return;
+    try {
+      window.focus();
+    } catch (e) {
+    }
+    Audio8.init();
+    if (typeof Auto !== "undefined" && Auto.on && !Secret.isOpen()) Auto.cancel("tap");
+    if (typeof Speed !== "undefined" && Speed.mode < 0 && !Secret.isOpen()) {
+      Speed.set(1);
+      return;
+    }
+    this.layout(true);
+    this.id = id;
+    this.setLit(true);
+    this.move(x, y);
+  },
+  move: function(x, y) {
+    var dx = x - this.cx, dy = y - this.cy, len = Math.sqrt(dx * dx + dy * dy), k = len > this.RT ? this.RT / len : 1;
+    this.kx = dx * k;
+    this.ky = dy * k;
+    this.ck.style.transform = "translate(" + Math.round(this.kx) + "px," + Math.round(this.ky) + "px)";
+    this.classify(dx, dy, len);
+    this.apply();
+  },
+  up: function() {
+    if (this.id === null) return;
+    this.id = null;
+    this.kx = this.ky = 0;
+    this.ck.style.transform = "";
+    this.setLit(false);
+    this.want = { up: 0, down: 0, left: 0, right: 0 };
+    this.apply();
+  },
+  // vector -> 8 directions: dead zone, wider cones for the 4 cardinals, hysteresis against flicker on the cone edges
+  classify: function(dx, dy, len) {
+    var w = this.want, was = w.up || w.down || w.left || w.right ? 1 : 0, nw = { up: 0, down: 0, left: 0, right: 0 };
+    if (len >= (was ? this.DZ_HOLD : this.DZ)) {
+      var ax = Math.abs(dx), ay = Math.abs(dy), maj = Math.max(ax, ay), mnr = Math.min(ax, ay), diag = (w.left || w.right) && (w.up || w.down);
+      var useDiag = mnr > maj * (diag ? this.D_OFF : this.D_ON);
+      var horiz = ax >= ay;
+      if (useDiag || horiz) {
+        if (dx < 0) nw.left = 1;
+        else nw.right = 1;
+      }
+      if (useDiag || !horiz) {
+        if (dy < 0) nw.up = 1;
+        else nw.down = 1;
+      }
+    }
+    this.want = nw;
+  },
+  apply: function() {
+    var ds = ["up", "down", "left", "right"], i, d;
+    for (i = 0; i < 4; i++) {
+      d = ds[i];
+      if (this.want[d]) {
+        if (!Input.held[d]) Input.down(d);
+        this.mine[d] = true;
+      } else if (this.mine[d]) {
+        Input.up(d);
+        this.mine[d] = false;
+      }
+    }
+  },
+  setLit: function(on) {
+    this.lit = on;
+    this.el.classList.toggle("on", on);
+    this.drawKnob(this.ck, on, this.phase);
+  },
+  release: function() {
+    this.up();
+    this.want = { up: 0, down: 0, left: 0, right: 0 };
+    this.apply();
+  },
+  // logical px that a bottom-anchored HUD box (x0..x1 in game px, bottom edge `gap` px above the controls strip) must move up to clear the ring
+  lift: function(x0, x1, gap) {
+    if (!this.shown || !this.ready) return 0;
+    try {
+      var cr = canvas.getBoundingClientRect(), k = cr.width / W, S = this.BASE * this.SC;
+      if (!(k > 0)) return 0;
+      var gl = (this.bx - cr.left) / k - 3, gr = (this.bx + S - cr.left) / k + 3;
+      if (x1 < gl || x0 > gr) return 0;
+      var boxBottom = cr.top + (H - BOT - gap) * k, ringTop = this.by - 6;
+      return boxBottom > ringTop ? Math.ceil((boxBottom - ringTop) / k) : 0;
+    } catch (e) {
+      return 0;
+    }
+  },
+  // ---- layout / visibility ----
+  free: function() {
+    var t = topScene();
+    if (!t || t !== field || !G) return false;
+    if (field.lock) return false;
+    if (typeof Speed !== "undefined" && Speed.mode < 0) return false;
+    return true;
+  },
+  layout: function(force) {
+    var now = Date.now();
+    if (!force && now - this.lastLay < 200) return;
+    this.lastLay = now;
+    var el = this.el, P = this.PAD, S = this.BASE * this.SC, mn = document.getElementById("bMenu"), mu = document.getElementById("btnMute"), top = 1e9, right = -1e9, n = 0;
+    [mn, mu].forEach(function(b) {
+      if (!b) return;
+      var r = b.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        top = Math.min(top, r.top);
+        right = Math.max(right, r.right);
+        n++;
+      }
+    });
+    var bl, bt;
+    if (n) {
+      bl = right - S;
+      bt = top - 18 - S;
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+      bl = Math.max(P + 2, bl);
+      bt = Math.max(P + 2, bt);
+      el.style.left = bl - P + "px";
+      el.style.top = bt - P + "px";
+    } else {
+      el.style.left = "auto";
+      el.style.top = "auto";
+      el.style.right = "calc(max(14px, env(safe-area-inset-right, 0px)) - " + P + "px)";
+      el.style.bottom = "max(14px, env(safe-area-inset-bottom, 0px))";
+      var r0 = this.cb.getBoundingClientRect();
+      bl = r0.left;
+      bt = r0.top;
+    }
+    this.bx = bl;
+    this.by = bt;
+    this.cx = bl + S / 2;
+    this.cy = bt + S / 2;
+    var dg = false;
+    try {
+      var cr = canvas.getBoundingClientRect(), hg = field.heroGame(), k = cr.width / W, hx = cr.left + hg[0] * k, hy = cr.top + hg[1] * k, hr = 12 * k;
+      dg = hx + hr > bl - 6 && hx - hr < bl + S + 6 && hy + hr > bt - 6 && hy - hr < bt + S + 6;
+    } catch (e) {
+    }
+    if (dg !== this.dodge) {
+      this.dodge = dg;
+      el.classList.toggle("dodge", dg);
+    }
+  },
+  tick: function() {
+    if (!this.ready) {
+      this.build();
+      if (!this.ready) return;
+    }
+    var show = this.enabled() && this.free();
+    if (show !== this.shown) {
+      this.shown = show;
+      if (show) {
+        this.el.style.display = "block";
+        this.lastLay = 0;
+        this.layout(true);
+      } else {
+        this.release();
+        this.el.style.display = "none";
+      }
+    }
+    if (!show) return;
+    this.layout(false);
+    var now = Date.now();
+    if (now - this.lastShim > 450) {
+      this.lastShim = now;
+      this.phase ^= 1;
+      this.drawKnob(this.ck, this.lit, this.phase);
+    }
+    if (this.id !== null) this.apply();
+  }
+};
+(function() {
+  function loop() {
+    try {
+      Joy.tick();
+    } catch (e) {
+      if (window.console) console.error(e);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
 })();
 
 // ---- perf.js ----
