@@ -2857,6 +2857,1284 @@ var Audio8 = {
 };
 Audio8.muted = Store.get("emberfall_mute") === "1";
 
+// ---- music2.js ----
+var Music2 = /* @__PURE__ */ (function() {
+  var NI = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  var DEFS = {}, COMP = {}, warnings = [], ORDER = [];
+  var QUAL = { "": [0, 4, 7], m: [0, 3, 7], dim: [0, 3, 6], "5": [0, 7, 12], "7": [0, 4, 7, 10], m7: [0, 3, 7, 10], maj7: [0, 4, 7, 11], sus4: [0, 5, 7], sus2: [0, 2, 7], aug: [0, 4, 8] };
+  var BASSOFF = { r: 0, o: 12, d: -12, f: 7, u: -5, e: 5, t: 6, n: 1, l: -1, "7": 10, "9": 14, b: -2, p: 19 };
+  function midiOf(n) {
+    var m = /^([A-G])([#b]?)(-?\d)$/.exec(n);
+    if (!m) throw new Error("bad note " + n);
+    return 12 * (parseInt(m[3], 10) + 1) + NI[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0);
+  }
+  function hz(m) {
+    return 440 * Math.pow(2, (m - 69) / 12);
+  }
+  function chordOf(ch) {
+    var m = /^([A-G])([#b]?)(maj7|m7|m|dim|sus4|sus2|aug|5|7|)$/.exec(ch);
+    if (!m) throw new Error("bad chord " + ch);
+    return { pc: (NI[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12, t: QUAL[m[3]] };
+  }
+  function reg(pc, lo) {
+    return lo + ((pc - lo) % 12 + 12) % 12;
+  }
+  function warn(s) {
+    warnings.push(s);
+  }
+  function parseMel(s, label) {
+    var out = [], toks = String(s).replace(/\|/g, " ").trim().split(/\s+/);
+    toks.forEach(function(t) {
+      if (!t) return;
+      var m = /^([A-G][#b]?-?\d|r):(\d+)([a-z]*)$/.exec(t);
+      if (!m) {
+        warn(label + ": bad token " + t);
+        return;
+      }
+      out.push({ n: m[1] === "r" ? null : midiOf(m[1]), d: parseInt(m[2], 10), f: m[3] });
+    });
+    return out;
+  }
+  function steps(ev) {
+    var n = 0;
+    ev.forEach(function(e) {
+      n += e.d;
+    });
+    return n;
+  }
+  function fit(ev, want, label) {
+    var have = steps(ev);
+    if (have !== want) {
+      warn(label + ": " + have + " steps, wanted " + want);
+      if (have < want) ev.push({ n: null, d: want - have });
+      else {
+        var over = have - want;
+        while (over > 0 && ev.length) {
+          var e = ev[ev.length - 1];
+          if (e.d <= over) {
+            over -= e.d;
+            ev.pop();
+          } else {
+            e.d -= over;
+            over = 0;
+          }
+        }
+      }
+    }
+    return ev;
+  }
+  function patEvents(p, noteFor) {
+    var ev = [], i, c, last;
+    if (p.length !== 16) warn("pattern length " + p.length + ": " + p);
+    for (i = 0; i < 16; i++) {
+      c = p.charAt(i) || "-";
+      last = ev[ev.length - 1];
+      if (c === ".") {
+        if (last) last.d++;
+        else ev.push({ n: null, d: 1 });
+      } else if (c === "-") {
+        if (last && last.n === null) last.d++;
+        else ev.push({ n: null, d: 1 });
+      } else {
+        var nn = noteFor(c);
+        if (nn === null || nn === void 0) {
+          if (last && last.n === null) last.d++;
+          else ev.push({ n: null, d: 1 });
+        } else ev.push({ n: nn, d: 1, acc: c !== c.toLowerCase() });
+      }
+    }
+    return ev;
+  }
+  function expandList(s, nb) {
+    var out = [];
+    String(s).trim().split(/\s+/).forEach(function(t) {
+      var m = /^(.+?)\*(\d+)$/.exec(t);
+      if (m) for (var i = 0; i < +m[2]; i++) out.push(m[1]);
+      else out.push(t);
+    });
+    var r = [];
+    for (var b = 0; b < nb; b++) r.push(out[b % out.length]);
+    return r;
+  }
+  function merge(ev) {
+    var out = [];
+    ev.forEach(function(e) {
+      var l = out[out.length - 1];
+      if (l && l.n === null && e.n === null) l.d += e.d;
+      else out.push(e);
+    });
+    return out;
+  }
+  function shiftScale(m, k, scale) {
+    var st = 0, dir = k < 0 ? -1 : 1, cur = m;
+    k = Math.abs(k);
+    while (st < k) {
+      cur += dir;
+      if (scale.indexOf((cur % 12 + 12) % 12) >= 0) st++;
+    }
+    return cur;
+  }
+  var CHD = {
+    lead: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.11, env: { a: 4e-3, d: 0, s: 1, r: 0.05 }, gate: 0.94, vib: { rate: 5.6, depth: 16, delay: 0.14, min: 6 }, pan: 0, send: 0.8 },
+    harm: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.06, env: { a: 4e-3, d: 0, s: 1, r: 0.05 }, gate: 0.94, vib: { rate: 5.3, depth: 12, delay: 0.2, min: 8 }, pan: -0.35, send: 0.6 },
+    arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.045, env: { a: 2e-3, d: 0.07, s: 0.4, r: 0.03 }, gate: 0.8, pan: 0.4, send: 0.8 },
+    bass: { oscs: [{ wave: "saw", g: 0.7 }, { wave: "sine", mul: 0.5, g: 0.7 }], vol: 0.2, env: { a: 3e-3, d: 0, s: 1, r: 0.03 }, gate: 0.82, lp: 600, fenv: 3, fdec: 0.1, pan: 0, send: 0 },
+    pad: { oscs: [{ wave: "tri", g: 1 }, { wave: "tri", g: 1 }, { wave: "tri", g: 1 }], vol: 0.04, env: { a: 0.06, d: 0, s: 1, r: 0.25 }, gate: 1, pan: 0, send: 0.5 },
+    kick: { vol: 0.34 },
+    snare: { vol: 0.2 },
+    hat: { vol: 0.085 },
+    tom: { vol: 0.24 },
+    crash: { vol: 0.12 },
+    fx: { vol: 0.1 }
+  };
+  function mix(a, b) {
+    var o = {}, k;
+    for (k in a) o[k] = a[k];
+    for (k in b) o[k] = b[k] && typeof b[k] === "object" && !(b[k] instanceof Array) && a[k] && typeof a[k] === "object" && !(a[k] instanceof Array) ? mix(a[k], b[k]) : b[k];
+    return o;
+  }
+  function compile(name) {
+    if (COMP[name]) return COMP[name];
+    var d = DEFS[name], T = { lead: [], harm: [], arp: [], bass: [], pad: [], kick: [], snare: [], hat: [], tom: [], crash: [], fx: [] }, bars = 0;
+    var scale = d.scale || [0, 2, 3, 5, 7, 8, 10];
+    d.sections.forEach(function(sec, si) {
+      var nb = sec.bars, L = name + " sec" + si, chs = sec.chords.trim().split(/\s+/), W2 = nb * 16, b, k;
+      function chAt(b2) {
+        return chordOf(chs[b2 % chs.length]);
+      }
+      if (chs.length > nb || nb % chs.length) warn(L + ": chords " + chs.length + " vs bars " + nb);
+      var lead = sec.lead ? fit(parseMel(sec.lead, L + " lead"), W2, L + " lead") : [{ n: null, d: W2 }];
+      T.lead = T.lead.concat(lead);
+      var harm;
+      if (sec.harm && /^[+-]\d+$/.test(sec.harm) && sec.lead) {
+        var hk = parseInt(sec.harm, 10);
+        harm = lead.map(function(e) {
+          return { n: e.n === null ? null : shiftScale(e.n, hk, scale.map(function(x) {
+            return (x + (d.tonic || 0)) % 12;
+          })), d: e.d, f: e.f };
+        });
+      } else if (sec.harm) harm = fit(parseMel(sec.harm, L + " harm"), W2, L + " harm");
+      else harm = [{ n: null, d: W2 }];
+      T.harm = T.harm.concat(harm);
+      var bp = sec.bass ? String(sec.bass).trim().split(/\s+/) : null, ap = sec.arp ? String(sec.arp).trim().split(/\s+/) : null, pd = sec.pad || null, apo = sec.arpOct || 0;
+      for (b = 0; b < nb; b++) {
+        var c2 = chAt(b), brt = reg(c2.pc, 36);
+        if (bp) T.bass = T.bass.concat(patEvents(bp[b % bp.length], function(ch2) {
+          var lc = ch2.toLowerCase();
+          if (lc === "3") return brt + c2.t[1];
+          if (lc === "x") return null;
+          var o = BASSOFF[lc];
+          return o === void 0 ? null : brt + o;
+        }));
+        else T.bass.push({ n: null, d: 16 });
+        var tones = c2.t, arpRoot = reg(c2.pc, 60) + apo * 12;
+        if (ap) T.arp = T.arp.concat(patEvents(ap[b % ap.length], function(ch2) {
+          var ix = parseInt(ch2, 36);
+          if (isNaN(ix)) return null;
+          return arpRoot + tones[ix % tones.length] + 12 * Math.floor(ix / tones.length);
+        }));
+        else T.arp.push({ n: null, d: 16 });
+        if (pd) {
+          var prt = reg(c2.pc, 48), v = [prt + tones[0], prt + tones[1], prt + (tones.length > 3 ? tones[3] : tones[2])];
+          if (pd === "whole") T.pad.push({ n: v, d: 16 });
+          else if (pd === "half") {
+            T.pad.push({ n: v, d: 8 });
+            T.pad.push({ n: v, d: 8 });
+          } else if (pd === "quarter") for (k = 0; k < 4; k++) T.pad.push({ n: v, d: 4, f: "s" });
+          else if (pd === "off") for (k = 0; k < 4; k++) {
+            T.pad.push({ n: null, d: 2 });
+            T.pad.push({ n: v, d: 2, f: "s" });
+          }
+          else if (pd === "swell") T.pad.push({ n: v, d: 16, f: "w" });
+          else T.pad.push({ n: null, d: 16 });
+        } else T.pad.push({ n: null, d: 16 });
+      }
+      var dl = sec.drums ? expandList(sec.drums, nb) : null;
+      for (b = 0; b < nb; b++) {
+        var kit = dl && d.kit[dl[b]];
+        [["kick", "k"], ["snare", "s"], ["hat", "h"], ["tom", "t"], ["crash", "c"]].forEach(function(ln) {
+          var pat = kit && kit[ln[1]], i;
+          if (!pat) {
+            T[ln[0]].push({ n: null, d: 16 });
+            return;
+          }
+          if (pat.length !== 16) warn(L + " drum " + dl[b] + "." + ln[1] + " len " + pat.length);
+          for (i = 0; i < 16; i++) {
+            var ch2 = pat.charAt(i);
+            T[ln[0]].push(ch2 === "." || ch2 === "-" || ch2 === "" ? { n: null, d: 1 } : { n: ch2, d: 1 });
+          }
+        });
+      }
+      var fx = sec.fx ? fit(String(sec.fx).trim().split(/\s+/).map(function(t) {
+        var m = /^(rise|fall|boom|r):(\d+)$/.exec(t);
+        if (!m) {
+          warn(L + " fx " + t);
+          return { n: null, d: 1 };
+        }
+        return { n: m[1] === "r" ? null : m[1], d: +m[2] };
+      }), W2, L + " fx") : [{ n: null, d: W2 }];
+      T.fx = T.fx.concat(fx);
+      bars += nb;
+    });
+    var W = { kick: 0.8, bass: 0.82, tom: 0.9, lead: 1.15, harm: 1.15, arp: 1.2, hat: 1.2, crash: 1.1 };
+    var ch = mix(CHD, d.ch || {}), tracks = [], steps16 = bars * 16;
+    ["lead", "harm", "arp", "bass", "pad", "kick", "snare", "hat", "tom", "crash", "fx"].forEach(function(role) {
+      var ev = merge(T[role]);
+      if (!ev.some(function(e) {
+        return e.n !== null;
+      })) return;
+      if (steps(ev) !== steps16) warn(name + " " + role + " total " + steps(ev) + " != " + steps16);
+      tracks.push({ role, ch: role, vol: (ch[role].vol || 0.1) * (W[role] || 1) * (d.vol || 1), notes: ev });
+    });
+    var c = { name, bpm: d.bpm, loop: d.loop !== false, steps: steps16, bars, tracks, ch, echo: d.echo || null, mixv: d.mix || 1, roles: tracks.map(function(t) {
+      return t.role;
+    }) };
+    COMP[name] = c;
+    return c;
+  }
+  var curves = {};
+  function driveCurve(k) {
+    var key = String(k);
+    if (curves[key]) return curves[key];
+    var n = 1024, a = new Float32Array(n), i, x;
+    for (i = 0; i < n; i++) {
+      x = i / (n - 1) * 2 - 1;
+      a[i] = Math.tanh(x * k) / Math.tanh(k);
+    }
+    return curves[key] = a;
+  }
+  var satCurve = null;
+  function mkWaves(ctx, A) {
+    var w = A.waves, n = 48, k, re, im, defs = { saw: function(k2) {
+      return 1 / k2;
+    }, organ: function(k2) {
+      return k2 <= 6 ? [0, 1, 0.6, 0.35, 0.3, 0.15, 0.1][k2] : 0;
+    }, reed: function(k2) {
+      return k2 % 2 ? 1 / k2 : 0.15 / k2;
+    }, bell: function(k2) {
+      return [0, 1, 0, 0.45, 0, 0.3, 0, 0.12][k2] || 0;
+    } };
+    Object.keys(defs).forEach(function(nm) {
+      re = new Float32Array(n);
+      im = new Float32Array(n);
+      for (k = 1; k < n; k++) im[k] = defs[nm](k);
+      try {
+        w[nm] = ctx.createPeriodicWave(re, im);
+      } catch (e) {
+      }
+    });
+    [["pulse33", 0.33], ["pulse10", 0.1]].forEach(function(p) {
+      re = new Float32Array(n);
+      im = new Float32Array(n);
+      for (k = 1; k < n; k++) re[k] = 2 / (k * Math.PI) * Math.sin(k * Math.PI * p[1]);
+      try {
+        w[p[0]] = ctx.createPeriodicWave(re, im);
+      } catch (e) {
+      }
+    });
+    var len = Math.floor(ctx.sampleRate * 1), buf = ctx.createBuffer(1, len, ctx.sampleRate), dd = buf.getChannelData(0), seed = 987654321, i;
+    for (i = 0; i < len; i++) {
+      seed = seed * 1664525 + 1013904223 >>> 0;
+      dd[i] = seed / 2147483648 - 1;
+    }
+    A.m2noise = buf;
+  }
+  function setWave(A, os, wave) {
+    if (wave === "tri") os.type = "triangle";
+    else if (A.waves[wave]) os.setPeriodicWave(A.waves[wave]);
+    else os.type = wave === "sine" || wave === "square" || wave === "sawtooth" || wave === "triangle" ? wave : "square";
+  }
+  function mkBus(A, song) {
+    var ctx = A.ctx, c = song.m2, bus = { nodes: [], srcs: [], ch: {} };
+    function reg2(n) {
+      bus.nodes.push(n);
+      return n;
+    }
+    var sum = reg2(ctx.createGain()), out = reg2(ctx.createGain()), sat = reg2(ctx.createWaveShaper());
+    if (!satCurve) {
+      satCurve = new Float32Array(1025);
+      for (var i = 0; i < 1025; i++) {
+        var x = i / 512 - 1;
+        satCurve[i] = Math.tanh(x * 1.25) / Math.tanh(1.25);
+      }
+    }
+    sat.curve = satCurve;
+    out.gain.value = c.mixv;
+    sum.connect(sat);
+    sat.connect(out);
+    out.connect(A.music);
+    bus.out = out;
+    var sendIn = null;
+    if (c.echo) {
+      var dl = reg2(ctx.createDelay(1.5)), fb = reg2(ctx.createGain()), lp = reg2(ctx.createBiquadFilter()), wet = reg2(ctx.createGain());
+      sendIn = reg2(ctx.createGain());
+      dl.delayTime.value = Math.min(1.2, 60 / c.bpm * (c.echo.beats || 0.75));
+      fb.gain.value = c.echo.fb !== void 0 ? c.echo.fb : 0.35;
+      lp.type = "lowpass";
+      lp.frequency.value = c.echo.lp || 3200;
+      wet.gain.value = c.echo.wet !== void 0 ? c.echo.wet : 0.3;
+      sendIn.connect(dl);
+      dl.connect(lp);
+      lp.connect(fb);
+      fb.connect(dl);
+      lp.connect(wet);
+      wet.connect(sum);
+    }
+    function hasRole(r) {
+      return c.roles.indexOf(r) >= 0;
+    }
+    function outOf(spec, parent) {
+      var node = parent;
+      if (ctx.createStereoPanner && spec.pan) {
+        var p = reg2(ctx.createStereoPanner());
+        p.pan.value = spec.pan;
+        node.connect(p);
+        node = p;
+      }
+      node.connect(sum);
+      if (sendIn && spec.send) {
+        var sg = reg2(ctx.createGain());
+        sg.gain.value = spec.send;
+        node.connect(sg);
+        sg.connect(sendIn);
+      }
+    }
+    function mkTone(role, spec) {
+      var ch = { m2: true, kind: "tone", spec, oscs: [], endT: 0, vlive: false, lastF: 0 }, mixn = reg2(ctx.createGain()), chain = mixn, oscs = spec.oscs;
+      oscs.forEach(function(o) {
+        var os = ctx.createOscillator(), g = reg2(ctx.createGain());
+        setWave(A, os, o.wave);
+        os.detune.value = o.det || 0;
+        g.gain.value = o.g === void 0 ? 1 : o.g;
+        os.connect(g);
+        g.connect(mixn);
+        os.start();
+        ch.oscs.push({ o: os, mul: o.mul || 1 });
+        bus.srcs.push(os);
+        bus.nodes.push(os);
+      });
+      if (spec.drive) {
+        var sh = reg2(ctx.createWaveShaper());
+        sh.curve = driveCurve(spec.drive);
+        chain.connect(sh);
+        chain = sh;
+      }
+      if (spec.lp) {
+        var f = reg2(ctx.createBiquadFilter());
+        f.type = "lowpass";
+        f.frequency.value = spec.lp;
+        f.Q.value = spec.q || 0.8;
+        chain.connect(f);
+        chain = f;
+        ch.filt = f.frequency;
+      }
+      var env = reg2(ctx.createGain());
+      env.gain.value = 0;
+      chain.connect(env);
+      ch.g = env.gain;
+      if (spec.vib) {
+        var lfo = ctx.createOscillator(), vd = reg2(ctx.createGain());
+        lfo.frequency.value = spec.vib.rate;
+        vd.gain.value = 0;
+        lfo.connect(vd);
+        ch.oscs.forEach(function(o) {
+          vd.connect(o.o.detune);
+        });
+        lfo.start();
+        bus.srcs.push(lfo);
+        bus.nodes.push(lfo);
+        ch.vd = vd.gain;
+      }
+      outOf(spec, env);
+      return ch;
+    }
+    function mkNoise(vol, ftype, ffreq, q, off, spec) {
+      var src = ctx.createBufferSource(), f = reg2(ctx.createBiquadFilter()), g = reg2(ctx.createGain()), ch = { m2: true, kind: "noise", endT: 0 };
+      src.buffer = A.m2noise;
+      src.loop = true;
+      f.type = ftype;
+      f.frequency.value = ffreq;
+      f.Q.value = q || 0.7;
+      g.gain.value = 0;
+      src.connect(f);
+      f.connect(g);
+      src.start(0, off);
+      bus.srcs.push(src);
+      bus.nodes.push(src);
+      ch.g = g.gain;
+      ch.f = f.frequency;
+      outOf(spec || { pan: 0 }, g);
+      return ch;
+    }
+    ["lead", "harm", "arp", "bass", "pad"].forEach(function(r) {
+      if (hasRole(r)) bus.ch[r] = mkTone(r, c.ch[r]);
+    });
+    if (hasRole("kick")) {
+      var kb = mkTone("kick", { oscs: [{ wave: "sine", g: 1 }], env: {}, pan: 0 });
+      kb.kind = "kickbody";
+      bus.ch.kick = { m2: true, kind: "kick", body: kb, click: mkNoise(1, "highpass", 2200, 0.7, 0.1), endT: 0 };
+    }
+    if (hasRole("snare")) bus.ch.snare = { m2: true, kind: "snare", noise: mkNoise(1, "bandpass", 2300, 0.55, 0.3, { pan: 0.08, send: 0.25 }), body: (function() {
+      var t = mkTone("snare", { oscs: [{ wave: "tri", g: 1 }], pan: 0 });
+      t.kind = "snbody";
+      return t;
+    })(), endT: 0 };
+    if (hasRole("hat")) bus.ch.hat = mkNoise(1, "highpass", 7800, 0.6, 0.5, { pan: -0.2 });
+    if (bus.ch.hat) bus.ch.hat.kind = "hat";
+    if (hasRole("tom")) {
+      bus.ch.tom = mkTone("tom", { oscs: [{ wave: "sine", g: 1 }], pan: 0.15, send: 0.2 });
+      bus.ch.tom.kind = "tom";
+    }
+    if (hasRole("crash")) {
+      bus.ch.crash = mkNoise(1, "highpass", 4800, 0.5, 0.7, { pan: 0.25, send: 0.2 });
+      bus.ch.crash.kind = "crash";
+    }
+    if (hasRole("fx")) {
+      bus.ch.fx = mkNoise(1, "bandpass", 800, 2.2, 0.2, { pan: 0, send: 0.3 });
+      bus.ch.fx.kind = "fx";
+      bus.ch.fxb = mkTone("fx", { oscs: [{ wave: "sine", g: 1 }], pan: 0 });
+      bus.ch.fxb.kind = "boomtone";
+    }
+    bus.in = sum;
+    return bus;
+  }
+  function clr(ch, t) {
+    if (t < ch.endT - 5e-4) return true;
+    return false;
+  }
+  function toneNote(A, ch, freq, t, dur, vol, slide, o) {
+    var sp = ch.spec, e = sp.env, a = e.a || 3e-3, d = e.d || 0, s = e.s === void 0 ? 1 : e.s, r = e.r || 0.04, g = ch.g, i, f, gate = sp.gate || 0.9;
+    if (o.stac) gate *= 0.5;
+    if (o.acc) vol *= 1.28;
+    if (o.w) {
+      a = Math.min(dur * 0.5, 0.5);
+    }
+    var G = Math.max(a + 4e-3, Math.min(dur * gate, dur - 4e-3)), tend = Math.min(t + G + r, t + dur - 5e-4);
+    if (tend <= t + G) tend = t + G + 2e-3;
+    var cancel = t < ch.endT - 5e-4;
+    if (cancel) {
+      g.cancelScheduledValues(t);
+      ch.oscs.forEach(function(x) {
+        x.o.frequency.cancelScheduledValues(t);
+      });
+      if (ch.filt) ch.filt.cancelScheduledValues(t);
+    }
+    g.setValueAtTime(1e-4, t);
+    g.linearRampToValueAtTime(vol, t + a);
+    var lvl = vol;
+    if (d > 0 && s < 1 && a + d < G) {
+      lvl = vol * Math.max(s, 2e-4);
+      g.exponentialRampToValueAtTime(lvl, t + a + d);
+    }
+    g.setValueAtTime(lvl, t + G);
+    g.exponentialRampToValueAtTime(1e-4, tend);
+    var multi = freq && freq.length;
+    for (i = 0; i < ch.oscs.length; i++) {
+      f = (multi ? freq[i] === void 0 ? freq[freq.length - 1] : freq[i] : freq) * ch.oscs[i].mul;
+      var fp = ch.oscs[i].o.frequency;
+      if (o.porta && ch.lastF) {
+        fp.setValueAtTime(ch.lastF * ch.oscs[i].mul, t);
+        fp.exponentialRampToValueAtTime(f, t + Math.min(0.08, dur * 0.45));
+      } else {
+        fp.setValueAtTime(f, t);
+        if (o.fall) fp.exponentialRampToValueAtTime(f * 0.5, t + dur * 0.92);
+        else if (slide) fp.exponentialRampToValueAtTime(slide * ch.oscs[i].mul, t + dur * 0.9);
+      }
+    }
+    ch.lastF = multi ? freq[0] : freq;
+    if (ch.filt && sp.fenv) {
+      ch.filt.setValueAtTime(sp.lp * sp.fenv, t);
+      ch.filt.exponentialRampToValueAtTime(sp.lp, t + (sp.fdec || 0.1));
+    }
+    if (ch.vd) {
+      var vb = sp.vib;
+      if (o.vib) {
+        ch.vd.setValueAtTime(0, t);
+        ch.vd.linearRampToValueAtTime(vb.depth, t + Math.min(dur * 0.5, 0.05 + vb.delay));
+        ch.vlive = true;
+      } else if (ch.vlive) {
+        ch.vd.setValueAtTime(0, t);
+        ch.vlive = false;
+      }
+    }
+    ch.endT = Math.max(t + dur, tend);
+  }
+  function hit(ch, t, vol, dec, shape) {
+    if (t < ch.endT - 5e-4) {
+      ch.g.cancelScheduledValues(t);
+    }
+    ch.g.setValueAtTime(vol, t);
+    ch.g.exponentialRampToValueAtTime(1e-4, t + dec);
+    ch.endT = t + dec;
+  }
+  function playVoice(A, dest, wave, freq, t, dur, vol, slide, o) {
+    switch (dest.kind) {
+      case "tone":
+        toneNote(A, dest, freq, t, dur, vol, slide, o);
+        break;
+      case "kick": {
+        var b = dest.body, ve = o.vel || 1, v = vol * ve;
+        if (t < b.endT - 5e-4) {
+          b.g.cancelScheduledValues(t);
+          b.oscs[0].o.frequency.cancelScheduledValues(t);
+        }
+        var fq = b.oscs[0].o.frequency;
+        fq.setValueAtTime(o.kf || 170, t);
+        fq.exponentialRampToValueAtTime(o.kl || 46, t + 0.07);
+        b.g.setValueAtTime(v, t);
+        b.g.exponentialRampToValueAtTime(v * 0.5, t + 0.07);
+        b.g.exponentialRampToValueAtTime(1e-4, t + (o.kd || 0.26));
+        b.endT = t + (o.kd || 0.26);
+        hit(dest.click, t, v * 0.55, 0.012);
+        break;
+      }
+      case "snare": {
+        var sv = vol * (o.vel || 1), n = dest.noise, sb = dest.body;
+        hit(n, t, sv, o.ghost ? 0.05 : 0.15);
+        if (t < sb.endT - 5e-4) {
+          sb.g.cancelScheduledValues(t);
+          sb.oscs[0].o.frequency.cancelScheduledValues(t);
+        }
+        sb.oscs[0].o.frequency.setValueAtTime(o.ghost ? 200 : 250, t);
+        sb.oscs[0].o.frequency.exponentialRampToValueAtTime(140, t + 0.05);
+        sb.g.setValueAtTime(sv * 0.8, t);
+        sb.g.exponentialRampToValueAtTime(1e-4, t + 0.09);
+        sb.endT = t + 0.09;
+        break;
+      }
+      case "hat":
+        hit(dest, t, vol * (o.vel || 1), o.open ? 0.2 : o.vel > 1 ? 0.055 : 0.038);
+        break;
+      case "crash":
+        hit(dest, t, vol, 1.3);
+        break;
+      case "tom": {
+        var tv = vol * (o.vel || 1), tf = dest.oscs[0].o.frequency;
+        if (t < dest.endT - 5e-4) {
+          dest.g.cancelScheduledValues(t);
+          tf.cancelScheduledValues(t);
+        }
+        tf.setValueAtTime(freq, t);
+        tf.exponentialRampToValueAtTime(freq * 0.5, t + 0.2);
+        dest.g.setValueAtTime(tv, t);
+        dest.g.exponentialRampToValueAtTime(1e-4, t + 0.3);
+        dest.endT = t + 0.3;
+        break;
+      }
+      case "fx": {
+        var A2 = o.fx, fr = dest.f, g = dest.g;
+        fr.cancelScheduledValues(t);
+        g.cancelScheduledValues(t);
+        if (A2 === "rise") {
+          fr.setValueAtTime(350, t);
+          fr.exponentialRampToValueAtTime(7500, t + dur);
+          g.setValueAtTime(1e-4, t);
+          g.exponentialRampToValueAtTime(vol, t + dur * 0.97);
+          g.linearRampToValueAtTime(1e-4, t + dur);
+        } else if (A2 === "fall") {
+          fr.setValueAtTime(7e3, t);
+          fr.exponentialRampToValueAtTime(250, t + dur);
+          g.setValueAtTime(vol, t);
+          g.exponentialRampToValueAtTime(1e-4, t + dur);
+        } else {
+          fr.setValueAtTime(260, t);
+          fr.exponentialRampToValueAtTime(70, t + dur);
+          g.setValueAtTime(vol * 1.6, t);
+          g.exponentialRampToValueAtTime(1e-4, t + dur);
+        }
+        dest.endT = t + dur;
+        break;
+      }
+      case "boomtone": {
+        var bf = dest.oscs[0].o.frequency;
+        bf.cancelScheduledValues(t);
+        dest.g.cancelScheduledValues(t);
+        bf.setValueAtTime(90, t);
+        bf.exponentialRampToValueAtTime(32, t + dur);
+        dest.g.setValueAtTime(vol * 3, t);
+        dest.g.exponentialRampToValueAtTime(1e-4, t + dur);
+        dest.endT = t + dur;
+        break;
+      }
+    }
+  }
+  var TOMF = { "1": 260, "2": 200, "3": 150, "4": 112 };
+  function noteEvent(A, s, tr, n, dur) {
+    var bus = s.bus, t = tr.t, ch = bus.ch[tr.ch], v = tr.vol, role = tr.role, sd = s.stepDur;
+    if (!ch) return;
+    switch (role) {
+      case "kick": {
+        var c = n.n;
+        A.osc("kick", 0, t, 0.26, v, ch, 0, { vel: c === "X" ? 1.2 : c === "g" ? 0.5 : 1 });
+        break;
+      }
+      case "snare": {
+        var c2 = n.n;
+        A.osc("snare", 0, t, 0.15, v, ch, 0, { vel: c2 === "X" ? 1.25 : c2 === "g" ? 0.45 : 1, ghost: c2 === "g" });
+        break;
+      }
+      case "hat": {
+        var c3 = n.n;
+        A.osc("hat", 0, t, 0.05, v, ch, 0, { vel: c3 === "X" ? 1.45 : c3 === "g" ? 0.55 : 1, open: c3 === "o" });
+        break;
+      }
+      case "tom": {
+        A.osc("tom", TOMF[n.n] || 180, t, 0.3, v, ch, 0, { vel: 1 });
+        break;
+      }
+      case "crash": {
+        A.osc("crash", 0, t, 1.3, v, ch, 0, {});
+        break;
+      }
+      case "fx": {
+        if (n.n === "boom") {
+          A.osc("boom", 0, t, Math.min(1.8, n.d * sd), v, bus.ch.fxb, 0, {});
+          A.osc("fx", 0, t, Math.min(1.8, n.d * sd), v, ch, 0, { fx: "boom" });
+        } else A.osc("fx", 0, t, n.d * sd, v, ch, 0, { fx: n.n });
+        break;
+      }
+      default: {
+        var f = n.f || "", spec = ch.spec, vb = spec.vib, vib = !!vb && (f.indexOf("v") >= 0 || f.indexOf("n") < 0 && n.d >= vb.min);
+        var fr = n.n instanceof Array ? n.n.map(hz) : hz(n.n), slide = 0;
+        A.osc(spec.oscs[0].wave, fr, t, dur, v * (n.acc ? 1.25 : 1), ch, slide, { vib, stac: f.indexOf("s") >= 0, acc: f.indexOf("a") >= 0, porta: f.indexOf("p") >= 0, fall: f.indexOf("f") >= 0, w: f.indexOf("w") >= 0 });
+      }
+    }
+  }
+  function info(name) {
+    var c = compile(name), d = DEFS[name];
+    return { name, bpm: d.bpm, key: d.key, mode: d.mode, bars: c.bars, steps: c.steps, loop: c.loop, loopSec: c.steps * 60 / d.bpm / 4, desc: d.desc, roles: c.roles.slice() };
+  }
+  var M = {
+    warnings,
+    defs: DEFS,
+    def: function(name, d) {
+      DEFS[name] = d;
+      ORDER.push(name);
+    },
+    names: function() {
+      return ORDER.slice();
+    },
+    has: function(n) {
+      return !!DEFS[n];
+    },
+    info,
+    compile,
+    build: function(name) {
+      var c = compile(name);
+      return { bpm: c.bpm, loop: c.loop, steps: c.steps, echo: 0, m2: c, tracks: c.tracks.map(function(t) {
+        return { role: t.role, ch: t.ch, vol: t.vol, notes: t.notes, idx: 0, t: 0, pass: 0 };
+      }) };
+    },
+    install: function(A) {
+      var play0 = A._play, note0 = A._note, osc0 = A.osc, setup0 = A._setup, stop0 = A.stop;
+      A.LOOKAHEAD = 0.45;
+      A.TICK = 50;
+      A._setup = function(ctx) {
+        var r = setup0.apply(this, arguments);
+        try {
+          mkWaves(ctx, this);
+        } catch (e) {
+        }
+        return r;
+      };
+      A.osc = function(wave, freq, t, dur, vol, dest, slideTo, opt) {
+        if (dest && dest.m2) return playVoice(this, dest, wave, freq, t, dur, vol, slideTo, opt || {});
+        return osc0.apply(this, arguments);
+      };
+      A._note = function(s, tr, n, dur) {
+        if (s.m2) return noteEvent(this, s, tr, n, dur);
+        return note0.apply(this, arguments);
+      };
+      A._play = function(name) {
+        if (!DEFS[name]) return play0.apply(this, arguments);
+        if (this.songName === name && (this.song || !this.ctx)) return;
+        this.stop();
+        this.songName = name;
+        if (!this.ctx) {
+          this.pending = name;
+          return;
+        }
+        if (!this.m2noise) {
+          try {
+            mkWaves(this.ctx, this);
+          } catch (e) {
+          }
+        }
+        var s = M.build(name), self = this;
+        this.song = s;
+        s.bus = mkBus(this, s);
+        var start = this.ctx.currentTime + 0.06;
+        s.stepDur = 60 / s.bpm / 4;
+        s.tracks.forEach(function(tr) {
+          tr.idx = 0;
+          tr.t = start;
+          tr.pass = 0;
+        });
+        this.timer = setInterval(function() {
+          try {
+            self.schedule(self.ctx.currentTime + self.LOOKAHEAD);
+          } catch (e) {
+            self.stop();
+          }
+        }, this.TICK);
+        this.schedule(this.ctx.currentTime + this.LOOKAHEAD);
+      };
+      A.stop = function() {
+        var s = this.song, bus = s && s.bus;
+        stop0.apply(this, arguments);
+        if (bus && bus.srcs) setTimeout(function() {
+          bus.srcs.forEach(function(o) {
+            try {
+              o.stop();
+            } catch (e) {
+            }
+          });
+        }, 400);
+      };
+    }
+  };
+  return M;
+})();
+(function() {
+  var def = Music2.def;
+  var SAWLEAD = function(drive, lp) {
+    return { oscs: [{ wave: "saw", g: 0.55 }, { wave: "pulse25", g: 0.5, det: 7 }], drive, lp };
+  };
+  def("title", {
+    key: "A",
+    mode: "natural minor (E major dominant)",
+    tonic: 9,
+    bpm: 84,
+    mix: 0.89,
+    desc: "Slow brooding A-minor anthem: pad + pedal intro, half-time drums, distorted saw hook with vibrato, soaring climax.",
+    echo: { beats: 0.75, fb: 0.4, wet: 0.3, lp: 3e3 },
+    ch: {
+      lead: SAWLEAD(1.6, 4800),
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.05 },
+      bass: { vol: 0.2, lp: 520 },
+      pad: { oscs: [{ wave: "organ", g: 1 }, { wave: "organ", g: 1 }, { wave: "organ", g: 1 }], vol: 0.032 },
+      kick: { vol: 0.3 },
+      snare: { vol: 0.19 },
+      hat: { vol: 0.07 },
+      tom: { vol: 0.24 },
+      crash: { vol: 0.1 }
+    },
+    kit: {
+      T: { t: "3.......3......." },
+      T2: { t: "3.......3.3.2.1." },
+      A: { k: "x.......x.x.....", s: "....x.......x...", h: "x.x.x.x.x.x.x.x." },
+      C: { k: "x.......x.x.....", s: "....x.......x...", h: "x.x.x.x.x.x.x.x.", c: "x..............." },
+      F: { k: "x.......x.......", s: "....x...x.x.xxxx", h: "x.x.x.x.x.......", t: "..............22" },
+      B: { k: "x.x.....x.x.x...", s: "....x.......x...", h: "xxxxxxxxxxxxxxxx" },
+      BC: { k: "x.x.....x.x.x...", s: "....x.......x...", h: "xxxxxxxxxxxxxxxx", c: "x..............." },
+      BF: { k: "x.x.....x.x.....", s: "....x...x.x.xxxx", h: "X.X.X.X.X.X.....", t: "..............22" }
+    },
+    sections: [
+      { bars: 2, chords: "Am E", pad: "swell", bass: "r............... r.......r.......", arp: "0.1.2.3.2.1.0.1.", harm: "E5:12 A5:4 | G#5:12 B5:4", drums: "N T", fx: "r:16 rise:16" },
+      {
+        bars: 8,
+        chords: "Am F C G Am F Dm E",
+        pad: "whole",
+        bass: "r..r..r.r..r..r. r..r..r.r..r..r. r..r..r.r..r..o. r..r..r.r..r..r.",
+        arp: "0.1.2.1.0.1.2.1.",
+        arpOct: 0,
+        drums: "C A A F A A A F",
+        lead: "E5:4 A5:4 C6:6 B5:2 | A5:4 C6:4 F6:6 E6:2 | G5:4 E6:4 D6:4 C6:2 G5:2 | D6:6 B5:2 G5:4 B5:4 | E5:4 A5:4 C6:4 E6:4 | F6:6 E6:2 C6:4 A5:4 | D6:4 F6:4 A6:6 G6:2 | G#5:4 B5:4 E6:6 B5:2",
+        harm: "-2"
+      },
+      {
+        bars: 6,
+        chords: "F G Am C Dm E",
+        pad: "whole",
+        bass: "R.r.r.r.R.r.r.o. R.r.r.r.R.r.r.o. R.r.r.r.R.r.r.o.",
+        arp: "0123432101234321",
+        arpOct: 0,
+        drums: "BC B B B B BF",
+        lead: "C6:4 F6:4 A6:8 | G6:6 F6:2 D6:8 | E6:4 C6:4 A5:4 C6:2 E6:2 | G6:6 E6:2 C6:4 E6:4 | F6:4 A6:4 D7:4 C7:2 A6:2 | B6:6 G#6:2 E6:8",
+        harm: "-2",
+        fx: "r:80 rise:16"
+      }
+    ]
+  });
+  var FA = "D5:2 F5:2 A5:4 D6:4 C6:2 A5:2 | Bb5:4 A5:2 F5:2 D5:4 F5:4 | A5:2 C6:2 F6:4 E6:2 C6:2 A5:4 | G5:4 E5:4 G5:4 C6:2 D6:2 | D6:4 F6:4 A6:4 F6:2 D6:2 | Bb5:2 D6:2 F6:4 D6:4 Bb5:4 | G5:2 Bb5:2 D6:4 G6:4 F6:2 D6:2 | C#6:4 E6:4 A6:4 E6:2 C#6:2";
+  var FB = "D6:6 F6:2 Bb6:4 A6:2 F6:2 | C6:2 F6:2 A6:4 G6:2 F6:2 E6:4 | D6:4 G6:4 Bb6:6 A6:2 | F6:6 E6:2 D6:4 A5:4 | Bb5:2 D6:2 F6:2 Bb6:2 A6:4 F6:4 | C7:4 A6:4 F6:4 C6:4 | E6:4 A6:4 C#7:6 B6:2 | A6:2 G6:2 E6:2 C#6:2 A5:8";
+  def("field", {
+    key: "D",
+    mode: "natural minor (relative F major lift)",
+    tonic: 2,
+    bpm: 140,
+    mix: 0.87,
+    desc: "Driving overworld march: gallop bass, bright pulse hero lead with vibrato, 16th arps, four-on-the-floor lift in the B section.",
+    echo: { beats: 0.75, fb: 0.3, wet: 0.2, lp: 3600 },
+    ch: {
+      lead: { oscs: [{ wave: "pulse25", g: 1 }, { wave: "pulse12", g: 0.5, det: 9 }], vol: 0.105, lp: 6e3 },
+      harm: { oscs: [{ wave: "pulse50", g: 1 }], vol: 0.045 },
+      arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.04 },
+      bass: { lp: 650, vol: 0.2 },
+      pad: { oscs: [{ wave: "tri", g: 1 }, { wave: "tri", g: 1 }, { wave: "tri", g: 1 }], vol: 0.03 },
+      kick: { vol: 0.3 },
+      snare: { vol: 0.17 },
+      hat: { vol: 0.065 },
+      crash: { vol: 0.09 }
+    },
+    kit: {
+      A: { k: "x.....x.x.......", s: "....x.......x...", h: "x.x.x.x.x.x.x.x." },
+      AC: { k: "x.....x.x.......", s: "....x.......x...", h: "x.x.x.x.x.x.x.x.", c: "x..............." },
+      AF: { k: "x.....x.x.......", s: "....x...x.x.xxxx", h: "x.x.x.x.x.x....." },
+      D: { k: "x...x...x...x...", s: "....x.......x...", h: "x.o.x.o.x.o.x.o." },
+      DC: { k: "x...x...x...x...", s: "....x.......x...", h: "x.o.x.o.x.o.x.o.", c: "x..............." },
+      DF: { k: "x...x...x...x...", s: "....x...x.x.xxxx", h: "x.x.x.x.x.x....." }
+    },
+    sections: [
+      { bars: 8, chords: "Dm Bb F C Dm Bb Gm A", lead: FA, pad: "whole", bass: "r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.or", arp: "0121012101210121", drums: "AC A A A A A A AF" },
+      { bars: 8, chords: "Dm Bb F C Dm Bb Gm A", lead: FA, harm: "-2", pad: "whole", bass: "r.rro.rro.rro.rr", arp: "0121012101210121", arpOct: 1, drums: "DC D D D D D D DF" },
+      { bars: 8, chords: "Bb F Gm Dm Bb F A A", lead: FB, harm: "-2", pad: "whole", bass: "r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.ro.ro.r.ro.ro. r.rrr.rrr.rrrrrr", arp: "0123012301230123", arpOct: 1, drums: "DC D D D D D D DF" }
+    ]
+  });
+  def("town", {
+    key: "C",
+    mode: "major (lydian colour)",
+    tonic: 0,
+    bpm: 104,
+    mix: 0.78,
+    desc: "Calm, rich village theme: warm mellow pulse lead, walking bass, plucked arps, pad bed, brushed kit.",
+    scale: [0, 2, 4, 5, 7, 9, 11],
+    echo: { beats: 0.75, fb: 0.3, wet: 0.22, lp: 2800 },
+    ch: {
+      lead: { oscs: [{ wave: "pulse50", g: 0.8 }, { wave: "tri", g: 0.6 }], vol: 0.1, vib: { rate: 5.2, depth: 11, delay: 0.2, min: 6 }, env: { a: 0.012, d: 0.2, s: 0.85, r: 0.08 } },
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.04 },
+      arp: { oscs: [{ wave: "bell", g: 1 }], vol: 0.05, env: { a: 2e-3, d: 0.12, s: 0.25, r: 0.04 } },
+      bass: { oscs: [{ wave: "tri", g: 1 }, { wave: "sine", mul: 0.5, g: 0.6 }], lp: 900, fenv: 1.6, vol: 0.2, gate: 0.9 },
+      pad: { oscs: [{ wave: "tri", g: 1 }, { wave: "tri", g: 1 }, { wave: "tri", g: 1 }], vol: 0.04 },
+      kick: { vol: 0.22 },
+      snare: { vol: 0.13 },
+      hat: { vol: 0.045 },
+      crash: { vol: 0.07 }
+    },
+    kit: { D: { k: "x.......x.......", s: "....g.......g...", h: "x.x.x.x.x.x.x.x." }, E: { k: "x.....x.x.......", s: "....x.......x...", h: "x.x.x.x.x.x.x.x." }, EF: { k: "x.......x.......", s: "....g...g.g.g.xx", h: "x.x.x.x.x.x....." } },
+    sections: [
+      {
+        bars: 8,
+        chords: "C Am F G C Em Dm G",
+        pad: "whole",
+        bass: "r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...e...f...",
+        arp: "0.1.2.1.0.1.2.1.",
+        arpOct: 0,
+        drums: "N N N N D D D D",
+        lead: "E5:4 G5:4 C6:6 B5:2 | A5:6 G5:2 E5:4 C5:4 | F5:4 A5:4 C6:4 A5:4 | B5:6 A5:2 G5:8 | E5:4 G5:4 C6:4 E6:4 | D6:6 B5:2 G5:4 B5:4 | A5:4 D6:4 F6:4 E6:2 D6:2 | B5:4 D6:4 G5:8"
+      },
+      {
+        bars: 8,
+        chords: "F G Em Am F C G G",
+        pad: "whole",
+        bass: "r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f...",
+        arp: "0.1.2.1.0.1.2.1.",
+        arpOct: 1,
+        drums: "E E E E E E E EF",
+        lead: "A5:6 C6:2 F6:8 | G6:4 D6:4 B5:8 | G5:4 B5:4 E6:8 | C6:6 E6:2 A6:4 E6:4 | A6:4 F6:4 C6:4 A5:4 | G5:4 C6:4 E6:8 | D6:4 G6:4 F6:4 D6:2 B5:2 | D6:8 B5:4 A5:2 B5:2",
+        harm: "-2"
+      }
+    ]
+  });
+  def("dungeon", {
+    key: "A",
+    mode: "phrygian / harmonic minor",
+    tonic: 9,
+    bpm: 92,
+    mix: 1.03,
+    desc: "Dark cave crawl: low drone bass with sub, heartbeat kick + toms, dripping bell arps, sparse echoing lead, creeping tension in the B half.",
+    scale: [0, 1, 3, 5, 7, 8, 10],
+    echo: { beats: 0.75, fb: 0.5, wet: 0.38, lp: 2400 },
+    ch: {
+      lead: { oscs: [{ wave: "pulse12", g: 0.8 }, { wave: "pulse25", g: 0.5, det: -8 }], vol: 0.1, lp: 3800, vib: { rate: 4.8, depth: 20, delay: 0.25, min: 5 } },
+      arp: { oscs: [{ wave: "bell", g: 1 }], vol: 0.06, env: { a: 2e-3, d: 0.15, s: 0.2, r: 0.05 }, gate: 0.6, send: 1.2 },
+      bass: { oscs: [{ wave: "saw", g: 0.6 }, { wave: "sine", mul: 0.5, g: 0.55 }], lp: 420, fenv: 2.2, fdec: 0.18, vol: 0.2 },
+      pad: { oscs: [{ wave: "reed", g: 1 }, { wave: "reed", g: 1 }, { wave: "reed", g: 1 }], vol: 0.03, env: { a: 0.4, d: 0, s: 1, r: 0.5 } },
+      kick: { vol: 0.28 },
+      snare: { vol: 0.15 },
+      hat: { vol: 0.045 },
+      tom: { vol: 0.24 },
+      crash: { vol: 0.08 }
+    },
+    kit: { H: { k: "x.......x.x.....", t: "..........3....." }, M: { k: "x.......x.x.....", s: "........x.......", h: "x...x...x...x...", t: "..........3...2." }, MF: { k: "x.......x.x.....", s: "........x.......", h: "x...x...x...x...", t: "..3.3.2.2.1.1..." } },
+    sections: [
+      {
+        bars: 8,
+        chords: "Am Am Bb Am Am Bb F E",
+        pad: "swell",
+        bass: "r............... r.......r.r..... r...............",
+        arp: "0...........2...",
+        arpOct: 1,
+        drums: "H",
+        lead: "E5:6 r:2 A5:4 C6:4 | B5:8 A5:4 E5:4 | F5:4 Bb5:6 A5:2 F5:4 | E5:12 r:4 | A5:4 C6:4 E6:8 | D6:6 C6:2 Bb5:4 A5:4 | A5:4 C6:4 F6:6 E6:2 | G#5:8 B5:4 G#5:4"
+      },
+      {
+        bars: 8,
+        chords: "Dm Bb Am E Dm Bb Am Am",
+        pad: "swell",
+        bass: "r.......r.r..... r.......r.r..... r.......r.r..... r.....r.r.....r.",
+        arp: "0.......2.......",
+        arpOct: 1,
+        drums: "M M M M M M M MF",
+        lead: "F5:4 A5:4 D6:8 | D6:4 Bb5:4 F5:8 | C6:6 B5:2 A5:8 | G#5:4 B5:4 E6:6 D6:2 | D6:4 E6:4 F6:4 A6:4 | Bb6:8 A6:4 F6:4 | E6:6 C6:2 A5:8 | E5:8 r:4 B4:2 C5:2",
+        harm: "-2"
+      }
+    ]
+  });
+})();
+(function() {
+  var def = Music2.def;
+  var BR = "E5:2 E5:2 G5:2 E5:2 B5:2 E5:2 A5:2 G5:2 | E5:2 E5:2 G5:2 B5:2 E6:4 D6:2 B5:2 | C5:2 C5:2 E5:2 G5:2 C6:4 B5:2 G5:2 | D5:2 D5:2 F#5:2 A5:2 D6:4 C#6:2 A5:2 | E5:2 E5:2 G5:2 E5:2 B5:2 E5:2 A5:2 G5:2 | E5:2 G5:2 B5:2 E6:2 G6:4 F#6:2 E6:2 | C6:2 B5:2 G5:2 E5:2 C5:2 E5:2 G5:2 C6:2 | B5:2 B5:2 D#6:2 F#6:2 B6:4 A6:2 F#6:2";
+  var BCH = "G6:4 E6:4 C6:4 E6:4 | F#6:4 A6:4 F#6:4 A6:4 | G6:6 F#6:2 E6:8 | B5:4 E6:4 G6:4 B6:4 | A6:4 G6:4 E6:4 C6:4 | D6:4 F#6:4 A6:4 F#6:4 | D#6:6 F#6:2 B6:8 | A6:4 F#6:4 D#6:4 B5:4";
+  var BBR = "E5:2 F5:2 E5:2 B5:2 E5:2 F5:2 E5:2 Bb5:2 | E5:2 F5:2 E5:2 B5:2 E5:2 F5:2 E5:2 Bb5:2 | C5:2 Db5:2 C5:2 G5:2 C5:2 Db5:2 C5:2 Gb5:2 | B4:2 C5:2 B4:2 F#5:2 B4:2 C5:2 B4:2 F5:2 | E5:2 F5:2 E5:2 B5:2 E5:2 F5:2 E5:2 Bb5:2 | E5:2 F5:2 E5:2 B5:2 G5:2 Bb5:2 B5:2 E6:2 | E6:2 D#6:2 E6:2 B5:2 G5:2 B5:2 E6:2 G6:2 | B6:2 A6:2 G6:2 F#6:2 E6:2 D#6:2 B5:2 G5:2";
+  def("battle", {
+    key: "E",
+    mode: "natural minor / phrygian chromatics",
+    tonic: 4,
+    bpm: 176,
+    mix: 0.92,
+    desc: "Fast, aggressive battle theme: 16th gallop bass, distorted saw riff, double-time chorus, tritone breakdown, snare-roll build back into the loop.",
+    echo: { beats: 0.75, fb: 0.28, wet: 0.14, lp: 3600 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.55 }, { wave: "pulse25", g: 0.5, det: 6 }], drive: 1.8, lp: 5200, vol: 0.092, gate: 0.88 },
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.045, pan: -0.4 },
+      arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.038, env: { a: 2e-3, d: 0.05, s: 0.4, r: 0.02 }, gate: 0.7 },
+      bass: { lp: 700, fenv: 3.2, fdec: 0.07, vol: 0.2, gate: 0.78 },
+      pad: { vol: 0.03 },
+      kick: { vol: 0.32 },
+      snare: { vol: 0.18 },
+      hat: { vol: 0.06 },
+      tom: { vol: 0.24 },
+      crash: { vol: 0.1 },
+      fx: { vol: 0.08 }
+    },
+    kit: {
+      A: { k: "x.x...x.x.x...x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx" },
+      AC: { k: "x.x...x.x.x...x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx", c: "x..............." },
+      AF: { k: "x.x...x.x.x.....", s: "....x...x.x.xxxx", h: "XxxxXxxxXxxx....", t: "..........3.2.1." },
+      D: { k: "x...x...x...x.xx", s: "..x...x...x...x.", h: "x.x.x.x.x.x.x.x." },
+      DC: { k: "x...x...x...x.xx", s: "..x...x...x...x.", h: "x.o.x.o.x.o.x.o.", c: "x..............." },
+      DF: { k: "x...x...x...x...", s: "..x...x...x.xxxx", h: "x.x.x.x.x.x.....", t: "..............21" },
+      H: { k: "x.x.x...x.xx....", s: "........x.......", h: "x.x.x.x.x.x.x.x." },
+      R: { k: "x...x...x...x...", s: "xxxxxxxxxxxxxxxx", h: "x.x.x.x.x.x.x.x." },
+      RR: { k: "x...x...x...x...", s: "XxXxXxXxXxXxXxXx", t: "................" }
+    },
+    sections: [
+      { bars: 8, chords: "Em Em C D Em Em C B", lead: BR, bass: "r.rrr.rrr.rrr.rr", arp: "0120120120120120", arpOct: 0, pad: "quarter", drums: "AC A A AF A A A AF" },
+      { bars: 8, chords: "C D Em Em C D B B", lead: BCH, harm: "-2", bass: "r.rrr.rro.rrr.rr r.rrr.rrr.rro.rr", arp: "0123012301230123", arpOct: 1, pad: "half", drums: "DC D D DF D D D DF" },
+      { bars: 8, chords: "Em Em C B Em Em B B", lead: BBR, bass: "RrrrRrrrRrrrRrrr", arp: null, pad: null, drums: "H H H H H H R RR", fx: "r:96 rise:32" }
+    ]
+  });
+  var BI = "r:16 | r:8 C5:4 Db5:4 | C5:2 Db5:2 C5:2 Gb5:2 C5:4 Db5:4 | G5:2 Gb5:2 G5:2 C6:2 Db6:2 C6:2 Gb5:2 G5:2";
+  var BA = "C5:2 C5:2 Eb5:2 C5:2 Gb5:2 C5:2 G5:2 C5:2 | C5:2 Db5:2 C5:2 Eb5:2 G5:4 Gb5:4 | Ab5:2 Ab5:2 C6:2 Ab5:2 Eb6:2 Ab5:2 C6:2 Ab5:2 | G5:2 G5:2 B5:2 G5:2 D6:4 Db6:2 B5:2 | C5:2 C5:2 Eb5:2 C5:2 Gb5:2 C5:2 G5:2 C5:2 | C5:2 Eb5:2 G5:2 C6:2 Eb6:4 D6:2 C6:2 | Db5:2 Db5:2 F5:2 Db5:2 Ab5:2 Db5:2 C6:2 Db5:2 | G5:2 B5:2 D6:2 F6:2 Ab6:4 G6:4";
+  var BB = "Ab5:2 C6:2 Eb6:4 Ab6:4 Eb6:4 | Bb5:2 D6:2 F6:4 Bb6:4 F6:4 | G6:6 F6:2 Eb6:4 C6:4 | D6:4 Eb6:4 G6:6 Gb6:2 | Ab6:6 G6:2 Eb6:4 C6:4 | Bb6:4 A6:4 F6:4 D6:4 | D6:2 G6:2 B6:4 G6:4 D6:4 | Ab6:2 G6:2 F6:2 Eb6:2 D6:2 Db6:2 C6:4";
+  var BC = "Gb5:8 G5:8 | Gb5:4 G5:4 Gb5:2 G5:2 Gb5:2 G5:2 | G5:2 Ab5:2 A5:2 Bb5:2 B5:2 C6:2 Db6:2 D6:2 | Eb6:2 E6:2 F6:2 Gb6:2 G6:4 r:4";
+  def("boss", {
+    key: "C",
+    mode: "minor with b2 / tritone (phrygian-dominant colour)",
+    tonic: 0,
+    bpm: 172,
+    mix: 0.84,
+    desc: "Menacing boss theme: low C pedal bass + sub, chromatic/tritone saw riffs, double-bass drums, tom-roll intro build, heroic-grim chorus, chromatic climb break with riser + snare roll.",
+    echo: { beats: 0.75, fb: 0.3, wet: 0.16, lp: 3200 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.6 }, { wave: "pulse25", g: 0.5, det: 8 }], drive: 2.4, lp: 4600, vol: 0.092, gate: 0.9, vib: { rate: 6, depth: 24, delay: 0.1, min: 6 } },
+      harm: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.05, pan: -0.4 },
+      arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.036, gate: 0.65 },
+      bass: { oscs: [{ wave: "saw", g: 0.7 }, { wave: "sine", mul: 0.5, g: 0.55 }], lp: 600, fenv: 3.5, fdec: 0.07, vol: 0.21, gate: 0.75 },
+      pad: { oscs: [{ wave: "reed", g: 1 }, { wave: "reed", g: 1 }, { wave: "reed", g: 1 }], vol: 0.03 },
+      kick: { vol: 0.34 },
+      snare: { vol: 0.2 },
+      hat: { vol: 0.055 },
+      tom: { vol: 0.26 },
+      crash: { vol: 0.11 },
+      fx: { vol: 0.09 }
+    },
+    kit: {
+      T1: { t: "4.......4.......", c: "x..............." },
+      T2: { t: "4...4...4.4.3.3." },
+      T3: { t: "4.4.3.3.2.2.1.1.", k: "x...x...x...x..." },
+      T4: { t: "1.1.2.2.3.3.4.4.", k: "x.x.x.x.x.x.x.x.", s: "........x.x.xxxx" },
+      A: { k: "x.xx..x.x.xx..x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx" },
+      AC: { k: "x.xx..x.x.xx..x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx", c: "x..............." },
+      AF: { k: "x.xx..x.x.xx....", s: "....x...x.x.xxxx", h: "XxxxXxxxXxxx....", t: "..........3.2.1." },
+      B: { k: "x.x.x.x.x.x.x.xx", s: "....x.......x...", h: "x.o.x.o.x.o.x.o." },
+      BC: { k: "x.x.x.x.x.x.x.xx", s: "....x.......x...", h: "x.o.x.o.x.o.x.o.", c: "x..............." },
+      BF: { k: "xxxxxxxxxxxxxxxx", s: "..x...x...x.xxxx", h: "x.x.x.x.x.x.....", t: "..............21" },
+      K: { k: "x.......x.......", s: "........x.......", h: "x...x...x...x..." },
+      R: { k: "x...x...x...x...", s: "xxxxxxxxxxxxxxxx", h: "x.x.x.x.x.x.x.x." },
+      RR: { k: "x.x.x.x.x.x.x.x.", s: "XxXxXxXxXxXxXxXx", h: "x.x.x.x.x.x.x.x." }
+    },
+    sections: [
+      { bars: 4, chords: "Cm", lead: BI, bass: "r............... r............... RrrRrrR.RrrRrrRr RrrRrrR.RrrRrrRr", arp: null, pad: "swell", drums: "T1 T2 T3 T4", fx: "boom:16 r:16 rise:32" },
+      { bars: 8, chords: "Cm Cm Ab G Cm Cm Db G", lead: BA, bass: "r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rt", arp: "0120120120120120", arpOct: 0, pad: "quarter", drums: "AC A A AF A A A AF" },
+      { bars: 8, chords: "Ab Bb Cm Cm Ab Bb G G", lead: BB, harm: "-2", bass: "r.r.r.r.o.r.r.r.", arp: "0123012301230123", arpOct: 1, pad: "half", drums: "BC B B B B B B BF" },
+      { bars: 4, chords: "Cm Cm G G", lead: BC, bass: "r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr RrrrRrrrRrrrRrrr", arp: null, pad: "swell", drums: "K K R RR", fx: "r:32 rise:32" }
+    ]
+  });
+  def("victory", {
+    key: "C",
+    mode: "major",
+    tonic: 0,
+    bpm: 148,
+    loop: false,
+    mix: 1.09,
+    desc: "Brassy one-shot fanfare: rising arpeggio calls, I-IV-V-vi-I, rolling snare into a held C chord with crash.",
+    scale: [0, 2, 4, 5, 7, 9, 11],
+    echo: { beats: 0.75, fb: 0.32, wet: 0.2, lp: 3600 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.55 }, { wave: "pulse25", g: 0.55, det: 6 }], drive: 1.5, lp: 5200, vol: 0.095, gate: 0.9, vib: { rate: 5.8, depth: 20, delay: 0.1, min: 8 } },
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.055 },
+      arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.04 },
+      bass: { lp: 800, vol: 0.2 },
+      pad: { oscs: [{ wave: "organ", g: 1 }, { wave: "organ", g: 1 }, { wave: "organ", g: 1 }], vol: 0.04 },
+      kick: { vol: 0.3 },
+      snare: { vol: 0.19 },
+      hat: { vol: 0.06 },
+      crash: { vol: 0.12 }
+    },
+    kit: { V: { k: "x...x...x...x.x.", s: "....x.......x...", h: "x.x.x.x.x.x.x.x.", c: "x..............." }, W: { k: "x...x...x...x...", s: "....x...x.x.xxxx", h: "x.x.x.x.x.x.x.x." }, X: { k: "X...............", s: "X...............", c: "x..............." } },
+    sections: [
+      {
+        bars: 4,
+        chords: "C F G Am",
+        lead: "C5:2 E5:2 G5:2 C6:2 r:2 G5:2 C6:2 E6:2 | F5:2 A5:2 C6:2 F6:2 r:2 C6:2 F6:2 A6:2 | G5:2 B5:2 D6:2 G6:2 r:2 D6:2 G6:2 B6:2 | A5:2 C6:2 E6:2 A6:2 G6:2 E6:2 C6:2 E6:2",
+        harm: "E5:4 G5:4 E5:4 G5:4 | A5:4 C6:4 A5:4 C6:4 | B5:4 D6:4 B5:4 D6:4 | C6:4 E6:4 C6:4 E6:4",
+        bass: "r.rro.rro.rro.rr",
+        arp: "0120120120120120",
+        pad: "whole",
+        drums: "V V V W"
+      },
+      { bars: 1, chords: "C", lead: "C7:12 r:4", harm: "G6:12 r:4", bass: "R...............", pad: "whole", drums: "X" }
+    ]
+  });
+  def("gameover", {
+    key: "A",
+    mode: "natural minor (ends on the dominant/tonic low)",
+    tonic: 9,
+    bpm: 64,
+    loop: false,
+    mix: 0.92,
+    desc: "Slow funeral dirge: heartbeat toms, low drone + sub, descending saw lament, final boom.",
+    echo: { beats: 1, fb: 0.45, wet: 0.35, lp: 2200 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.5 }, { wave: "pulse25", g: 0.5, det: -7 }], drive: 1.2, lp: 3200, vol: 0.1, vib: { rate: 4.6, depth: 26, delay: 0.3, min: 6 } },
+      bass: { lp: 420, vol: 0.2, gate: 1 },
+      pad: { oscs: [{ wave: "organ", g: 1 }, { wave: "organ", g: 1 }, { wave: "organ", g: 1 }], vol: 0.04, env: { a: 0.3, d: 0, s: 1, r: 0.8 } },
+      tom: { vol: 0.28 },
+      kick: { vol: 0.3 },
+      fx: { vol: 0.1 }
+    },
+    kit: { H: { t: "4.......4......." }, Z: { t: "4.......4.......", k: "x..............." } },
+    sections: [
+      { bars: 4, chords: "Am Dm E Am", lead: "E5:6 D5:2 C5:4 B4:4 | D5:6 C5:2 A4:8 | G#4:6 B4:2 E5:8 | A4:16", bass: "r............... r............... r............... r...............", pad: "swell", drums: "H H H Z", fx: "r:48 boom:16" }
+    ]
+  });
+})();
+(function() {
+  var def = Music2.def;
+  def("ending", {
+    key: "G",
+    mode: "major",
+    tonic: 7,
+    bpm: 92,
+    mix: 0.76,
+    desc: "Warm, bittersweet then triumphant: pad+arp verse, bass/soft drums second verse, full backbeat chorus, bridge build with snare roll and riser.",
+    scale: [0, 2, 4, 5, 7, 9, 11],
+    echo: { beats: 0.75, fb: 0.38, wet: 0.28, lp: 3200 },
+    ch: {
+      lead: { oscs: [{ wave: "pulse25", g: 0.7 }, { wave: "saw", g: 0.4, det: 6 }], drive: 1.2, lp: 5200, vol: 0.1, vib: { rate: 5.4, depth: 18, delay: 0.15, min: 6 } },
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.05 },
+      arp: { oscs: [{ wave: "bell", g: 1 }], vol: 0.05, env: { a: 2e-3, d: 0.14, s: 0.25, r: 0.04 }, gate: 0.8 },
+      bass: { oscs: [{ wave: "tri", g: 1 }, { wave: "saw", g: 0.35 }, { wave: "sine", mul: 0.5, g: 0.5 }], lp: 800, fenv: 1.8, vol: 0.2, gate: 0.9 },
+      pad: { oscs: [{ wave: "organ", g: 1 }, { wave: "organ", g: 1 }, { wave: "organ", g: 1 }], vol: 0.04 },
+      kick: { vol: 0.28 },
+      snare: { vol: 0.16 },
+      hat: { vol: 0.05 },
+      tom: { vol: 0.22 },
+      crash: { vol: 0.1 },
+      fx: { vol: 0.08 }
+    },
+    kit: {
+      S: { k: "x.......x.......", s: "........x.......", h: "x...x...x...x..." },
+      C: { k: "x.....x.x.......", s: "....x.......x...", h: "x.x.x.x.x.x.x.x.", c: "x..............." },
+      D: { k: "x.....x.x.......", s: "....x.......x...", h: "x.x.x.x.x.x.x.x." },
+      DF: { k: "x.....x.x.......", s: "....x...x.x.xxxx", h: "x.x.x.x.x.x.....", t: "..............21" },
+      G1: { t: "3.......3......." },
+      G2: { t: "3...3...3.3.2.2.", k: "x..............." },
+      G3: { s: "x.x.x.x.x.x.xxxx", k: "x...x...x...x..." }
+    },
+    sections: [
+      { bars: 4, chords: "G Em C D", lead: "B5:6 D6:2 G6:8 | E6:6 D6:2 B5:8 | C6:4 E6:4 G6:8 | F#6:6 E6:2 D6:8", pad: "whole", bass: "r.......o.......", arp: "0.1.2.3.2.1.0.1.", arpOct: 0, drums: "N N N N" },
+      { bars: 4, chords: "G Em C D", lead: "D6:4 G6:4 B6:8 | G6:6 F#6:2 E6:8 | E6:4 G6:4 C7:8 | A6:6 F#6:2 D6:8", harm: "-2", pad: "whole", bass: "r...f...r...f... r...f...r...f... r...f...r...f... r...f...r...a...", arp: "0.1.2.3.2.1.0.1.", arpOct: 0, drums: "S S S S" },
+      {
+        bars: 8,
+        chords: "C D Bm Em C D G G",
+        lead: "G6:4 E6:4 C6:4 E6:4 | F#6:4 A6:4 F#6:4 A6:4 | D6:4 F#6:4 B6:8 | G6:4 B6:4 G6:8 | C7:6 B6:2 G6:4 E6:4 | A6:4 F#6:4 D6:4 F#6:4 | B6:6 A6:2 G6:8 | G6:16",
+        harm: "-2",
+        pad: "whole",
+        bass: "r.r.r.r.r.r.r.o.",
+        arp: "0123012301230123",
+        arpOct: 1,
+        drums: "C D D D D D D DF"
+      },
+      { bars: 4, chords: "Em C D D", lead: "B5:8 G5:8 | C6:8 E6:8 | F#6:8 A6:8 | D6:12 r:4", harm: "-2", pad: "whole", bass: "r...............", arp: null, drums: "G1 G2 G2 G3", fx: "r:48 rise:16" }
+    ]
+  });
+  def("frost", {
+    key: "B",
+    mode: "natural minor (F# major dominant)",
+    tonic: 11,
+    bpm: 108,
+    mix: 0.92,
+    desc: "Icy tundra theme: glassy bell arpeggios, hollow pulse lead with long echoes, wind sweeps, steady soft marching drums that open into four-on-the-floor in the B half.",
+    echo: { beats: 0.75, fb: 0.5, wet: 0.35, lp: 3400 },
+    ch: {
+      lead: { oscs: [{ wave: "pulse50", g: 0.7 }, { wave: "pulse12", g: 0.5, det: 8 }], vol: 0.095, lp: 5e3, vib: { rate: 5, depth: 16, delay: 0.2, min: 6 } },
+      harm: { oscs: [{ wave: "tri", g: 1 }], vol: 0.06 },
+      arp: { oscs: [{ wave: "bell", g: 1 }], vol: 0.06, env: { a: 2e-3, d: 0.1, s: 0.2, r: 0.05 }, gate: 0.6, send: 1.1 },
+      bass: { oscs: [{ wave: "saw", g: 0.5 }, { wave: "sine", mul: 0.5, g: 0.5 }], lp: 520, fenv: 2, fdec: 0.12, vol: 0.2 },
+      pad: { oscs: [{ wave: "reed", g: 1 }, { wave: "reed", g: 1 }, { wave: "reed", g: 1 }], vol: 0.032, env: { a: 0.35, d: 0, s: 1, r: 0.5 } },
+      kick: { vol: 0.26 },
+      snare: { vol: 0.14 },
+      hat: { vol: 0.05 },
+      crash: { vol: 0.08 },
+      fx: { vol: 0.045 }
+    },
+    kit: {
+      A: { k: "x.......x.x.....", s: "........x.......", h: "x.x.x.x.x.x.x.x." },
+      AC: { k: "x.......x.x.....", s: "........x.......", h: "x.x.x.x.x.x.x.x.", c: "x..............." },
+      B: { k: "x...x...x...x...", s: "....x.......x...", h: "..o...o...o...o." },
+      BC: { k: "x...x...x...x...", s: "....x.......x...", h: "..o...o...o...o.", c: "x..............." },
+      BF: { k: "x...x...x...x...", s: "....x...x.x.xxxx", h: "..o...o...o....." }
+    },
+    sections: [
+      {
+        bars: 8,
+        chords: "Bm G D A Bm G Em F#",
+        pad: "whole",
+        bass: "r.......f.......",
+        arp: "0120120120120120",
+        arpOct: 1,
+        drums: "N N AC A A A A A",
+        fx: "rise:64 fall:64",
+        lead: "F#5:6 D5:2 F#5:4 B5:4 | B5:6 A5:2 G5:8 | A5:4 F#5:4 D5:4 F#5:4 | E5:6 C#5:2 E5:4 A5:4 | D6:6 C#6:2 B5:8 | B5:4 D6:4 G6:8 | E6:6 D6:2 B5:4 G5:4 | C#6:4 A#5:4 F#5:8"
+      },
+      {
+        bars: 8,
+        chords: "G D A Bm G D Em F#",
+        pad: "whole",
+        bass: "r..r..r.r..r..r.",
+        arp: "0123012301230123",
+        arpOct: 1,
+        drums: "BC B B B B B B BF",
+        fx: "fall:64 rise:64",
+        harm: "-2",
+        lead: "D6:4 B5:4 G5:8 | F#6:6 A6:2 F#6:8 | E6:4 C#6:4 A5:4 C#6:4 | D6:8 F#6:4 B6:4 | G6:6 F#6:2 D6:8 | A6:4 F#6:4 D6:4 A5:4 | G6:4 E6:4 B5:4 E6:4 | A#5:8 C#6:4 F#6:4"
+      }
+    ]
+  });
+  def("keep", {
+    key: "G",
+    mode: "natural / harmonic minor (D major dominant)",
+    tonic: 7,
+    bpm: 100,
+    mix: 0.98,
+    desc: "Gothic castle march: marching snare, walking saw bass, offbeat organ/reed stabs, regal brassy lead with vibrato; B half adds counter-harmony and more pressure.",
+    echo: { beats: 0.75, fb: 0.35, wet: 0.24, lp: 3e3 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.5 }, { wave: "pulse33", g: 0.6, det: 5 }], drive: 1.4, lp: 4200, vol: 0.095, vib: { rate: 5.5, depth: 20, delay: 0.15, min: 6 } },
+      harm: { oscs: [{ wave: "pulse25", g: 1 }], vol: 0.05 },
+      arp: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.04 },
+      bass: { oscs: [{ wave: "saw", g: 0.6 }, { wave: "sine", mul: 0.5, g: 0.5 }], lp: 640, fenv: 2.4, fdec: 0.1, vol: 0.2, gate: 0.85 },
+      pad: { oscs: [{ wave: "reed", g: 1 }, { wave: "reed", g: 1 }, { wave: "reed", g: 1 }], vol: 0.035, env: { a: 0.01, d: 0.1, s: 0.7, r: 0.1 } },
+      kick: { vol: 0.3 },
+      snare: { vol: 0.17 },
+      hat: { vol: 0.05 },
+      tom: { vol: 0.22 },
+      crash: { vol: 0.09 }
+    },
+    kit: {
+      M: { k: "x.......x.......", s: "....x..x....x..x", h: "x...x...x...x..." },
+      MC: { k: "x.......x.......", s: "....x..x....x..x", h: "x...x...x...x...", c: "x..............." },
+      MF: { k: "x.......x.......", s: "....x...x.x.xxxx", h: "x...x...x.......", t: "..............21" },
+      N: { k: "x...x...x...x...", s: "....x..x....x..x", h: "x.x.x.x.x.x.x.x." },
+      NF: { k: "x...x...x...x...", s: "....x...x.x.xxxx", h: "x.x.x.x.x.......", t: "..............21" },
+      NC: { k: "x...x...x...x...", s: "....x..x....x..x", h: "x.x.x.x.x.x.x.x.", c: "x..............." }
+    },
+    sections: [
+      {
+        bars: 8,
+        chords: "Gm Eb Bb F Gm Eb Cm D",
+        pad: "off",
+        bass: "r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...f...o...f... r...e...f...3...",
+        arp: null,
+        drums: "MC M M MF M M M MF",
+        lead: "D5:4 G5:4 Bb5:6 A5:2 | G5:6 Bb5:2 Eb6:8 | D6:6 C6:2 Bb5:4 F5:4 | A5:4 C6:4 F6:8 | G5:4 Bb5:4 D6:4 G6:4 | F6:6 Eb6:2 Bb5:8 | C6:4 Eb6:4 G6:6 F6:2 | F#6:6 D6:2 A5:4 F#5:4"
+      },
+      {
+        bars: 8,
+        chords: "Gm Eb Bb F Cm Eb D D",
+        pad: "off",
+        bass: "r.r.f.r.o.r.f.r. r.r.f.r.o.r.f.r.",
+        arp: "0.1.2.1.0.1.2.1.",
+        arpOct: 0,
+        drums: "NC N N NF N N N NF",
+        harm: "-2",
+        lead: "Bb5:2 D6:2 G6:4 F6:4 D6:4 | Eb6:4 G6:4 Bb6:8 | F6:6 D6:2 Bb5:8 | C6:4 F6:4 A6:8 | G6:6 Eb6:2 C6:8 | Bb5:4 Eb6:4 G6:4 Bb6:4 | A6:6 F#6:2 D6:8 | D6:4 F#6:4 A5:8"
+      }
+    ]
+  });
+  var QI = "r:16 | r:8 D5:4 Eb5:4 | D5:2 Eb5:2 D5:2 Ab5:2 D5:4 Eb5:4 | A5:2 Ab5:2 A5:2 D6:2 Eb6:2 D6:2 Ab5:2 A5:2";
+  var QA = "D5:2 D5:2 F5:2 D5:2 Ab5:2 D5:2 A5:2 D5:2 | D5:2 Eb5:2 D5:2 F5:2 A5:4 Ab5:4 | Bb5:2 Bb5:2 D6:2 Bb5:2 F6:2 Bb5:2 D6:2 Bb5:2 | A5:2 A5:2 C#6:2 A5:2 E6:4 Eb6:2 C#6:2 | D5:2 D5:2 F5:2 D5:2 Ab5:2 D5:2 A5:2 D5:2 | D5:2 F5:2 A5:2 D6:2 F6:4 E6:2 D6:2 | G5:2 G5:2 Bb5:2 G5:2 D6:2 G5:2 Db6:2 G5:2 | A5:2 C#6:2 E6:2 G6:2 Bb6:4 A6:4";
+  var QB = "Bb5:2 D6:2 F6:4 Bb6:4 F6:4 | C6:2 E6:2 G6:4 C7:4 G6:4 | A6:6 G6:2 F6:4 D6:4 | E6:4 F6:4 A6:6 Ab6:2 | Bb6:6 A6:2 F6:4 D6:4 | C7:4 G6:4 E6:4 G6:4 | C#6:2 E6:2 A6:4 C#7:6 B6:2 | A6:2 G6:2 E6:2 C#6:2 A5:4 Bb5:2 B5:2";
+  var QC = "Ab5:8 A5:8 | Ab5:4 A5:4 Ab5:2 A5:2 Ab5:2 A5:2 | A5:2 Bb5:2 B5:2 C6:2 C#6:2 D6:2 Eb6:2 E6:2 | F6:2 F#6:2 G6:2 Ab6:2 A6:4 r:4";
+  def("frostboss", {
+    key: "D",
+    mode: "minor with b5 tritone / chromatic climb",
+    tonic: 2,
+    bpm: 184,
+    mix: 0.83,
+    desc: "Final-boss theme: relentless D pedal, tritone saw riffs, constant 16th hats, double-bass, tom-roll intro, soaring B section, chromatic-climb break with riser and snare roll.",
+    echo: { beats: 0.75, fb: 0.32, wet: 0.18, lp: 3400 },
+    ch: {
+      lead: { oscs: [{ wave: "saw", g: 0.6 }, { wave: "pulse25", g: 0.5, det: 9 }], drive: 2.6, lp: 4800, vol: 0.09, gate: 0.9, vib: { rate: 6.2, depth: 26, delay: 0.1, min: 6 } },
+      harm: { oscs: [{ wave: "pulse12", g: 1 }], vol: 0.05, pan: -0.4 },
+      arp: { oscs: [{ wave: "bell", g: 1 }], vol: 0.045, env: { a: 2e-3, d: 0.06, s: 0.3, r: 0.02 }, gate: 0.7 },
+      bass: { oscs: [{ wave: "saw", g: 0.7 }, { wave: "sine", mul: 0.5, g: 0.55 }], lp: 620, fenv: 3.6, fdec: 0.07, vol: 0.21, gate: 0.74 },
+      pad: { oscs: [{ wave: "reed", g: 1 }, { wave: "reed", g: 1 }, { wave: "reed", g: 1 }], vol: 0.03 },
+      kick: { vol: 0.34 },
+      snare: { vol: 0.2 },
+      hat: { vol: 0.055 },
+      tom: { vol: 0.26 },
+      crash: { vol: 0.11 },
+      fx: { vol: 0.09 }
+    },
+    kit: {
+      T1: { t: "4.......4.......", c: "x..............." },
+      T2: { t: "4...4...4.4.3.3." },
+      T3: { t: "4.4.3.3.2.2.1.1.", k: "x...x...x...x..." },
+      T4: { t: "1.1.2.2.3.3.4.4.", k: "x.x.x.x.x.x.x.x.", s: "........x.x.xxxx" },
+      A: { k: "x.xx..x.x.xx..x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx" },
+      AC: { k: "x.xx..x.x.xx..x.", s: "....x.......x...", h: "XxxxXxxxXxxxXxxx", c: "x..............." },
+      AF: { k: "x.xx..x.x.xx....", s: "....x...x.x.xxxx", h: "XxxxXxxxXxxx....", t: "..........3.2.1." },
+      B: { k: "xx.xx.xxxx.xx.xx", s: "..x...x...x...x.", h: "x.o.x.o.x.o.x.o." },
+      BC: { k: "xx.xx.xxxx.xx.xx", s: "..x...x...x...x.", h: "x.o.x.o.x.o.x.o.", c: "x..............." },
+      BF: { k: "xxxxxxxxxxxxxxxx", s: "..x...x...x.xxxx", h: "x.x.x.x.x.x.....", t: "..............21" },
+      K: { k: "x.......x.......", s: "........x.......", h: "x...x...x...x..." },
+      R: { k: "x...x...x...x...", s: "xxxxxxxxxxxxxxxx", h: "x.x.x.x.x.x.x.x." },
+      RR: { k: "x.x.x.x.x.x.x.x.", s: "XxXxXxXxXxXxXxXx", h: "x.x.x.x.x.x.x.x." }
+    },
+    sections: [
+      { bars: 4, chords: "Dm", lead: QI, bass: "r............... r............... RrrRrrR.RrrRrrRr RrrRrrR.RrrRrrRr", pad: "swell", drums: "T1 T2 T3 T4", fx: "boom:16 r:16 rise:32" },
+      { bars: 8, chords: "Dm Dm Bb A Dm Dm Gm A", lead: QA, bass: "r.rrr.rrr.rrr.rr", arp: "0120120120120120", arpOct: 0, pad: "quarter", drums: "AC A A AF A A A AF" },
+      { bars: 8, chords: "Bb C Dm Dm Bb C A A", lead: QB, harm: "-2", bass: "r.r.r.r.o.r.r.r.", arp: "0123012301230123", arpOct: 1, pad: "half", drums: "BC B B B B B B BF" },
+      { bars: 4, chords: "Dm Dm A A", lead: QC, bass: "r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr r.rrr.rrr.rrr.rr RrrrRrrrRrrrRrrr", pad: "swell", drums: "K K R RR", fx: "r:32 rise:32" }
+    ]
+  });
+})();
+Music2.install(Audio8);
+
 // ---- maps.js ----
 function carve(w, h, fill, ops) {
   var g = [];
@@ -15914,7 +17192,7 @@ function drawHud() {
     drawText(ctx, lb, W - 3 - w + 6, 6, m < 0 ? "#a0c0ff" : "#ffe080");
   }
 }
-var SEC_ROWS = [{ k: "auto" }, { k: "ff" }, { k: "rw" }, { k: "norm" }, { k: "report" }, { k: "level" }, { k: "boss" }, { k: "close" }];
+var SEC_ROWS = [{ k: "auto" }, { k: "ff" }, { k: "rw" }, { k: "norm" }, { k: "report" }, { k: "level" }, { k: "boss" }, { k: "beast" }, { k: "close" }];
 function secretGeo() {
   var pitch = 26 + SEC_ROWS.length * 22 + 20 > H - BOT - 8 ? 19 : 22, h = 26 + SEC_ROWS.length * pitch + 20, y = Math.max(4, Math.round((H - BOT - h) / 2));
   return { x: 12, y, w: 232, h, pitch };
@@ -15955,6 +17233,8 @@ function SecretScene() {
       pushScene(LevelSelectScene());
     } else if (k === "boss") {
       pushScene(LevelSelectScene(true));
+    } else if (k === "beast") {
+      pushScene(BestiaryScene());
     } else close();
   }
   s.update = function(dt) {
@@ -16012,12 +17292,12 @@ function SecretScene() {
     ctx.globalAlpha = 0.55;
     R(ctx, 0, 0, W, H, "#000008");
     ctx.globalAlpha = 1;
-    if (topScene() !== s && topScene() && (topScene().name === "levels" || topScene().name === "bosses")) return;
+    if (topScene() !== s && topScene() && (topScene().name === "levels" || topScene().name === "bosses" || topScene().name === "bestiary")) return;
     drawWindow(ctx, g.x, g.y, g.w, g.h);
     drawText(ctx, "SECRET MENU", g.x + 12, g.y + 8, "#f8e080");
     drawText(ctx, "Now: " + (Speed.mode === 1 ? "normal speed" : Speed.label()) + (Auto.on ? "  AUTO" : ""), g.x + g.w - 26 - 6 * (6 + (Speed.mode === 1 ? 12 : Speed.label().length) + (Auto.on ? 6 : 0)), g.y + 8, "#a0c8ff");
     drawCloseBox(ctx, g);
-    var labels = { auto: "AI Autoplay", ff: "Fast-forward", rw: "Rewind", norm: "Normal speed (1x)", report: Auto.finished ? "Autoplay summary" : "Autoplay report", level: "Level Select", boss: "Boss Fight", close: "Close" };
+    var labels = { auto: "AI Autoplay", ff: "Fast-forward", rw: "Rewind", norm: "Normal speed (1x)", report: Auto.finished ? "Autoplay summary" : "Autoplay report", level: "Level Select", boss: "Boss Fight", beast: "Monsters", close: "Close" };
     SEC_ROWS.forEach(function(row, r) {
       var y = rowY(g, r), sel = s.row === r;
       drawText(ctx, labels[row.k], g.x + 22, y, sel ? "#ffffff" : "#c8d0f0");
@@ -16037,7 +17317,7 @@ function SecretScene() {
         var tx = x + "x";
         drawText(ctx, tx, cx + 14 - tx.length * 3, y, cur ? "#80ff90" : on2 ? "#ffffff" : "#a8b0d8");
       });
-      if (row.k === "level" || row.k === "boss") drawText(ctx, ">", g.x + g.w - 22, y, sel ? "#ffe080" : "#a8b0d8");
+      if (row.k === "level" || row.k === "boss" || row.k === "beast") drawText(ctx, ">", g.x + g.w - 22, y, sel ? "#ffe080" : "#a8b0d8");
       if (sel) ctx.drawImage(SPR.hand, g.x + 6, y - 2);
     });
     drawText(ctx, "Tap or Z: choose   X: close", g.x + 12, g.y + g.h - 14, "#8890b8");
@@ -18746,6 +20026,8 @@ var Close = {
       case "levels":
       case "bosses":
         return "Back";
+      case "bestiary":
+        return "Back";
       case "battle":
         return t.menu && t.menu.mode && t.menu.mode !== "cmd" && t.phase === "fight" ? "Back" : "";
     }
@@ -19106,7 +20388,13 @@ var TapMove = (function() {
     return true;
   }
   function faceAndAct(st) {
-    var f = field, p = f.p, s = st.spec, dx = s.cx - p.px, dy = s.cy - p.py;
+    var f = field, p = f.p, s = st.spec;
+    if (s.npc && f.npcs.indexOf(s.npc) >= 0) {
+      var cn = f.npcPos(s.npc);
+      s.cx = cn[0];
+      s.cy = cn[1];
+    }
+    var dx = s.cx - p.px, dy = s.cy - p.py;
     p.dir = Math.abs(dx) > Math.abs(dy) ? dx < 0 ? 2 : 3 : dy < 0 ? 1 : 0;
     f.tapPref = { x: s.cx, y: s.cy, t: Date.now() };
     Input.tap("a");
@@ -19326,7 +20614,23 @@ var TapMove = (function() {
   function arrive(st) {
     var f = field;
     if (st.spec.kind === "obj") {
-      var sp = st.spec;
+      var sp = st.spec, nn = sp.npc;
+      if (nn && f.npcs.indexOf(nn) >= 0) {
+        var cp = f.npcPos(nn), nx = nn.mv ? nn.tx : nn.x, ny = nn.mv ? nn.ty : nn.y, nd = Math.sqrt((cp[0] - f.p.px) * (cp[0] - f.p.px) + (cp[1] - f.p.py) * (cp[1] - f.p.py));
+        if (!(nd <= INTERACT_REACH - 3 || nd <= 36 && Math.abs(f.p.x - nx) + Math.abs(f.p.y - ny) === 2 && f.tileAt((f.p.x + nx) / 2, (f.p.y + ny) / 2) === "counter")) {
+          sp.ox = nx;
+          sp.oy = ny;
+          sp.cx = cp[0];
+          sp.cy = cp[1];
+          st.npcTile = npcTile(nn);
+          if (T.mk) {
+            T.mk.x = nx * 16 + 8;
+            T.mk.y = ny * 16 + 8;
+          }
+          replan();
+          return;
+        }
+      }
       finish(true);
       faceAndAct({ spec: sp });
       return;
@@ -23367,6 +24671,494 @@ enemySprite = function(id, frame) {
   if (BOSSX.cache[k]) return BOSSX.cache[k];
   return BOSSX.get(id, frame, _enemySpriteBoss(id, frame));
 };
+
+// ---- bestiary.js ----
+var Bestiary = (function() {
+  var B = {}, ELEM_COL = { fire: "#ff9060", ice: "#80d8ff", bolt: "#ffe060", wind: "#a0f0b0", none: "#c8c8d8" };
+  var LORE = {
+    slime: "Moss Slimes are what the Vale of Ash grows when old rain meets older ember-ash: a damp green lump that slowly digests whatever it settles on. Farmers in Brindlemoor call them harmless, right up until you stand still. They hate flame, and one torch will scatter a whole meadow of them.",
+    bat: "Duskwings nest in the cracked chimneys of ruined waystations and come out when the lamps are lit. They hunt warmth more than meat, sipping it in quick stinging bites before vanishing. A gust of wind or a spark of lightning ruins their flight, and a clipped Duskwing cannot turn.",
+    wolf: "Thornwolves wear the bramble of the Vale like armor, burrs knotted into their coats since the Hollow Crown fell. They hunt in the gap between dusk and moonrise and never chase far from the treeline. Travelers learn to keep a fire between themselves and the hedge.",
+    wisp: "A Cinder Wisp is a spark that refused to go out when the Crown burned. It drifts through the Emberpeaks tunnels feeding on heat, and fire only makes it brighter. Cold and a good gale are the only things that make it sulk.",
+    toad: "Deep in the cave pools, Hex Toads soak up the last sour magic seeping from the peaks and croak it back out as chill. Miners swear their song curdles milk at a hundred paces. Fire cooks them and lightning stops them, but ice barely itches.",
+    golem: "Built to haul ore for a foreman nobody remembers, the Rust Golems kept working after the mines emptied. Rain and time have crusted them red, and their orders have worn down to a single one: nothing passes. Lightning loosens the joints that hammers cannot.",
+    greymaw: "Every village near the Vale tells of Old Greymaw, the grey wolf who bit a king's hand and was never caught. She is older than the road and wiser than every trap set for her. Some say she guards the fox-paths so that something worse cannot use them.",
+    sentinel: "The Hollow Sentinel is a suit of Crown-guard armor that still stands its post at the cave mouth long after its wearer was lost. When the last royal seal faded from its breastplate, it decided that every visitor must be an intruder. It answers to no living banner.",
+    boss: "Once the regent who held the Crown for a king no one remembers, he refused to let it pass into other hands, and the Crown answered by hollowing him out. Now ember and silence wear his shape on a throne in the deepest cave. He does not want to rule; he only cannot let go.",
+    frostbat: "Where Duskwings keep to cracked chimneys, Rime Bats keep to the frozen eaves of Frostmere, and hunger has made them bold. Their bite leaves a white, numbing frost. The Rimewatch hang a lantern at every door at night for the same reason shepherds keep dogs.",
+    snowwolf: "Snow Wolves came down from the high passes the winter the Rime Throne woke, and the cold seems to have followed their packs. They are broad, patient and quick, with frost-rimed manes that ring like bells as they run. A lone traveler only hears the bells once.",
+    frostwisp: "A Frost Wisp is the pale cousin of the Cinder Wisp, born where the last hearths of Frostmere guttered out. It drifts over snowfields and frozen marsh, drawing the heat from anything bright. Flame startles it badly, and so does sudden thunder.",
+    icegolem: "Frostmere's stonecutters once carved golems from glacier ice to hold the roads against avalanches. Hoarwen's winter taught them a different duty. They are slow, huge and nearly unbreakable by blade, but they crack under heat and storm.",
+    rimeknight: "Rime Knights served the Frost Court when it still had a living queen, sworn to keep the keep's gates. Cold keeps their armor from rusting and their oaths from fading, so they still march in pairs with lances lowered. They respect nothing but formation, and fire.",
+    blizzwraith: "Where a blizzard dies in the pass, a Gale Wraith sometimes rises from the last of the wind. It has no body, only a howl wearing a cloak of snow, and it hurls storms at whoever it finds. Warmth hurts it, and so does anyone who stays calm while it screams.",
+    glacier: "The Ice Warden has guarded the Rimegate since before the Hollow Crown fell, a towering knot of living glacier shaped like a sentry. It tests every traveler by fighting first and asking nothing, ever. Fire and a quick strike are the only words it understands.",
+    yeti: "The Pale Yeti is a legend among the Rimewatch: a white shape in the storm that takes sledges and leaves prints twice the size of a man's. It is not cruel, only territorial, and hungry in the way mountains are. A fire at your back and a hard hit to the chest will send it away, for a season.",
+    rimecap: "Captain of the Frost Court's honor guard, he held the keep's yard against the thaw riots and was never relieved. Winter kept his body upright and his orders intact, and now he drills empty ranks in silence. He fights as he commanded: with a lance and a ward of ice.",
+    tyrant: "No one in Frostmere knows what the Frost Tyrant was before it became a tyrant. It sleeps in the dungeon under the keep, a mountain of black ice the queen once chained to her will and has since forgotten how to release. Its roar sets avalanches loose in the next valley.",
+    queen: "Hoarwen was the last queen of Frostmere. She bargained with the Hollow Crown to end a winter that would not stop, and learned too late that it only ended in her. Now she sits the Rime Throne and keeps her whole kingdom in a long, kind, final frost, because she cannot bear to remember warmth."
+  };
+  var TYPE_DESC = { phys: "physical hit", physAll: "physical, hits all", mag: "magic", magAll: "magic, hits all", drainP: "drains life", charge: "charges a big attack", heal: "heals", drainM: "drains magic" };
+  function skillList(e) {
+    var out = [], seen = {};
+    function add(s) {
+      if (!s || seen[s.name]) return;
+      seen[s.name] = 1;
+      var d = TYPE_DESC[s.type] || s.type;
+      if (s.elem && s.elem !== "none" && (s.type === "mag" || s.type === "magAll")) d = s.elem + " " + d;
+      out.push({ name: s.name, desc: d });
+    }
+    (e.skills || []).forEach(add);
+    if (e.boss) {
+      var BS = CORE.BOSS_SKILLS, pats = e.pats ? [].concat.apply([], e.pats) : [].concat(CORE.BOSS_PATTERN_A, CORE.BOSS_PATTERN_B);
+      pats.forEach(function(k) {
+        add(BS[k]);
+      });
+    }
+    return out;
+  }
+  B.power = function(e) {
+    var bulk = e.mhp * (1 + ((e.def || 0) + (e.mdef || 0)) / 60), off = Math.max(e.atk || 0, e.mag || 0), pace = 1 + (e.spd || 0) / 40;
+    var p = Math.sqrt(bulk * off * pace) * (1 + 0.04 * Math.min(skillList(e).length, 6)) * (e.boss ? 1.25 : 1) * (e.phases ? 1.1 : 1);
+    return Math.round(p);
+  };
+  function isFrost(id) {
+    return typeof FROST_ENEMIES !== "undefined" && !!FROST_ENEMIES[id];
+  }
+  var cache = null;
+  B.entries = function() {
+    if (cache && cache.n === Object.keys(CORE.ENEMIES).length) return cache.list;
+    var list = Object.keys(CORE.ENEMIES).map(function(id) {
+      var e = CORE.ENEMIES[id];
+      return { id, e, name: e.name, power: B.power(e), tag: e.boss ? "BOSS" : e.rare ? "RARE" : isFrost(id) ? "ICE" : "", ice: isFrost(id) };
+    });
+    cache = { n: list.length, list };
+    var mx = {};
+    ["mhp", "atk", "mag", "def", "mdef", "spd"].forEach(function(k) {
+      mx[k] = Math.max.apply(null, list.map(function(r) {
+        return r.e[k] || 0;
+      }));
+    });
+    cache.max = mx;
+    cache.maxPower = Math.max.apply(null, list.map(function(r) {
+      return r.power;
+    }));
+    return list;
+  };
+  B.sorted = function(strongestFirst) {
+    var l = B.entries().slice().sort(function(a, b) {
+      return strongestFirst ? b.power - a.power || a.name.localeCompare(b.name) : a.power - b.power || a.name.localeCompare(b.name);
+    });
+    return l;
+  };
+  B.lore = function(id) {
+    return LORE[id] || "Little is written about this creature. Travelers who have met it agree on one thing: it is best met with a full party and a plan.";
+  };
+  var thumbs = {};
+  function thumb(id) {
+    if (thumbs[id]) return thumbs[id];
+    var s = enemySprite(id, 0), c = document.createElement("canvas");
+    c.width = 34;
+    c.height = 26;
+    var x = c.getContext("2d"), k = Math.min(34 / s.width, 26 / s.height, 1), w = Math.max(1, Math.round(s.width * k)), h = Math.max(1, Math.round(s.height * k));
+    x.imageSmoothingEnabled = true;
+    try {
+      x.imageSmoothingQuality = "high";
+    } catch (err) {
+    }
+    x.drawImage(s, 0, 0, s.width, s.height, Math.round((34 - w) / 2), 26 - h, w, h);
+    return thumbs[id] = c;
+  }
+  function itemName(id) {
+    var i = CORE.ITEMS && CORE.ITEMS[id];
+    return i ? i.name : id;
+  }
+  function elemLine(label, arr) {
+    return { label, text: arr && arr.length ? arr.join(", ") : "none", has: !!(arr && arr.length) };
+  }
+  function buildDetail(r, rank, total, cw) {
+    var e = r.e, ops = [], y = 0, mx = cache.max, cpl = Math.floor(cw / 6);
+    function text(s, x, col) {
+      ops.push({ t: "text", s, x, y, c: col });
+    }
+    function wrap(s, col, x) {
+      wrapText(s, cpl - Math.floor((x || 0) / 6)).forEach(function(ln) {
+        text(ln, x || 0, col);
+        y += 10;
+      });
+    }
+    function head(s) {
+      y += 4;
+      ops.push({ t: "rule", y: y + 4, x: 0 });
+      text(s, 0, "#f8e080");
+      y += 12;
+    }
+    ops.push({ t: "sprite", y, h: 108 });
+    y += 112;
+    var chips = "Lv " + e.lvl + (r.tag ? "   " + r.tag : "") + (r.ice && r.tag !== "ICE" ? "   ICE" : "");
+    text(chips, 0, r.tag === "BOSS" ? "#ff9090" : r.tag === "RARE" ? "#ffd870" : "#a8c8ff");
+    y += 12;
+    text("POWER " + r.power + "   RANK " + rank + "/" + total, 0, "#ffffff");
+    y += 4;
+    head("STATS");
+    [["HP", "mhp"], ["ATK", "atk"], ["MAG", "mag"], ["DEF", "def"], ["MDEF", "mdef"], ["SPD", "spd"]].forEach(function(p) {
+      var v = e[p[1]] || 0;
+      text(p[0], 0, "#c8d0f0");
+      text(String(v), 38, "#ffffff");
+      ops.push({ t: "bar", x: 76, y: y + 1, w: cw - 76, f: v / (mx[p[1]] || 1), c: p[1] === "mhp" ? "#60d070" : p[1] === "spd" ? "#70c8ff" : p[1] === "def" || p[1] === "mdef" ? "#a0a8d0" : "#ff7a60" });
+      y += 11;
+    });
+    head("ELEMENTS");
+    [elemLine("Weak", e.weak), elemLine("Resists", e.resist), elemLine("Absorbs", e.absorb)].forEach(function(l, i) {
+      text(l.label, 0, "#c8d0f0");
+      text(l.text, 54, l.has ? i === 0 ? "#ffb070" : i === 1 ? "#90b0ff" : "#80ffa0" : "#7880a0");
+      y += 10;
+    });
+    head("SKILLS");
+    var sk = skillList(e);
+    if (!sk.length) {
+      text("Basic attacks only", 0, "#a8b0d8");
+      y += 10;
+    }
+    sk.forEach(function(s) {
+      var line = s.name + " - " + s.desc;
+      wrap(line, "#d8e0ff", 0);
+    });
+    if (e.phases) {
+      wrap("Changes tactics as its health falls (" + (e.phases.length + 1) + " phases).", "#ffb0b0", 0);
+    } else if (e.boss) {
+      wrap("Grows more dangerous when badly hurt.", "#ffb0b0", 0);
+    }
+    head("REWARDS");
+    if (e.boss && !e.xp && !e.gold) {
+      wrap("Story battle: no XP or gold, the victory is the prize.", "#d8e0ff", 0);
+    } else {
+      text("XP", 0, "#c8d0f0");
+      text(String(e.xp || 0), 24, "#ffffff");
+      text("Gold", 90, "#c8d0f0");
+      text(String(e.gold || 0), 126, "#ffe080");
+      y += 11;
+    }
+    if (e.steal) {
+      text("Steal", 0, "#c8d0f0");
+      text(itemName(e.steal), 36, "#ffffff");
+      y += 10;
+    }
+    text("Drop", 0, "#c8d0f0");
+    text(e.drop ? itemName(e.drop) + " (" + Math.round((e.dropRate || 0) * 100) + " in 100)" : "none", 36, e.drop ? "#ffffff" : "#7880a0");
+    y += 10;
+    head("STORY");
+    wrap(B.lore(r.id), "#d0d8f4", 0);
+    y += 4;
+    wrap("Power = sqrt(HP x (1 + (DEF + MDEF) / 60) x best of ATK or MAG x (1 + SPD / 40)), plus a little for each skill; bosses count extra.", "#6870a0", 0);
+    return { ops, h: y + 4 };
+  }
+  var listenersOn = false;
+  function installListeners() {
+    if (listenersOn) return;
+    listenersOn = true;
+    function top() {
+      var t = topScene();
+      return t && t.name === "bestiary" ? t : null;
+    }
+    window.addEventListener("pointermove", function(e) {
+      var s = top();
+      if (s && s.drag) s.dragTo(e.clientX, e.clientY);
+    });
+    window.addEventListener("pointerup", function(e) {
+      var s = top();
+      if (s && s.drag) s.dragEnd(e.clientX, e.clientY, false);
+    });
+    window.addEventListener("pointercancel", function() {
+      var s = top();
+      if (s && s.drag) s.dragEnd(0, 0, true);
+    });
+    window.addEventListener("wheel", function(e) {
+      var s = top();
+      if (s) {
+        s.scrollBy(e.deltaY * 0.5);
+        e.preventDefault();
+      }
+    }, { passive: false });
+  }
+  B.Scene = function() {
+    var s = { name: "bestiary", overlay: true, t: 0, mode: "list", strongest: true, sel: 0, scroll: 0, dscroll: 0, drag: null, list: null, det: null, detId: null };
+    var PITCH = 30;
+    function geo() {
+      var h = Math.max(120, H - BOT - 8);
+      return { x: 6, y: 4, w: 244, h };
+    }
+    function listView() {
+      var g = geo();
+      return { top: g.y + 40, bot: g.y + g.h - 18 };
+    }
+    function detView() {
+      var g = geo();
+      return { top: g.y + 20, bot: g.y + g.h - 24 };
+    }
+    function resort() {
+      s.list = B.sorted(s.strongest);
+    }
+    function maxScroll() {
+      if (s.mode === "list") {
+        var v = listView();
+        return Math.max(0, s.list.length * PITCH - (v.bot - v.top));
+      }
+      var d = detView();
+      return Math.max(0, (s.det ? s.det.h : 0) - (d.bot - d.top));
+    }
+    function clampScroll() {
+      var m = maxScroll();
+      if (s.mode === "list") s.scroll = Math.max(0, Math.min(m, s.scroll));
+      else s.dscroll = Math.max(0, Math.min(m, s.dscroll));
+    }
+    function showSel() {
+      var v = listView(), vh = v.bot - v.top, y0 = s.sel * PITCH;
+      if (y0 < s.scroll) s.scroll = y0;
+      else if (y0 + PITCH > s.scroll + vh) s.scroll = y0 + PITCH - vh;
+      clampScroll();
+    }
+    function openDetail(i) {
+      s.sel = Math.max(0, Math.min(s.list.length - 1, i));
+      var r = s.list[s.sel];
+      showSel();
+      var all = B.sorted(true), rank = 1;
+      for (var k = 0; k < all.length; k++) if (all[k].id === r.id) rank = k + 1;
+      s.mode = "detail";
+      s.detId = r.id;
+      s.dscroll = 0;
+      s.det = buildDetail(r, rank, all.length, geo().w - 20);
+      Audio8.sfx("ok");
+    }
+    function toList() {
+      s.mode = "list";
+      s.det = null;
+      showSel();
+      Audio8.sfx("cancel");
+    }
+    function close() {
+      popScene();
+      Input.clear();
+    }
+    function back() {
+      if (s.mode === "detail") toList();
+      else {
+        Audio8.sfx("cancel");
+        close();
+      }
+    }
+    function toggleSort() {
+      var id = s.list[s.sel] && s.list[s.sel].id;
+      s.strongest = !s.strongest;
+      resort();
+      for (var i = 0; i < s.list.length; i++) if (s.list[i].id === id) s.sel = i;
+      showSel();
+      Audio8.sfx("cursor");
+    }
+    s.scrollBy = function(d) {
+      if (s.mode === "list") s.scroll += d;
+      else s.dscroll += d;
+      clampScroll();
+    };
+    s.update = function(dt) {
+      s.t += dt;
+      var hd = s.mode === "detail" ? Input.heldDir() : null;
+      if (hd === "up" || hd === "down") {
+        s.dscroll += (hd === "down" ? 1 : -1) * 110 * dt;
+        clampScroll();
+        Input.pressedQ.up = Input.pressedQ.down = false;
+      }
+      var d = Input.dir();
+      if (s.mode === "list") {
+        var n = s.list.length;
+        if (d === "up") {
+          s.sel = (s.sel + n - 1) % n;
+          showSel();
+          Audio8.sfx("cursor");
+        } else if (d === "down") {
+          s.sel = (s.sel + 1) % n;
+          showSel();
+          Audio8.sfx("cursor");
+        } else if (d === "left" || d === "right") toggleSort();
+        if (Input.pressed("a")) {
+          openDetail(s.sel);
+          return;
+        }
+      } else {
+        var m = s.list.length;
+        if (d === "left") openDetail((s.sel + m - 1) % m);
+        else if (d === "right") openDetail((s.sel + 1) % m);
+        else if (Input.pressed("a")) {
+          toList();
+          return;
+        }
+      }
+      if (Input.pressed("b")) back();
+    };
+    s.tapAt = function(gx, gy) {
+      s.drag = { gx, gy, lx: gx, ly: gy, sc: s.mode === "list" ? s.scroll : s.dscroll, moved: false };
+      return true;
+    };
+    function toGame(cx, cy) {
+      return TouchWalk.toGame(cx, cy);
+    }
+    s.dragTo = function(cx, cy) {
+      var p = toGame(cx, cy), D = s.drag;
+      if (!D) return;
+      D.lx = p[0];
+      D.ly = p[1];
+      if (Math.abs(p[1] - D.gy) > 5) D.moved = true;
+      if (D.moved) {
+        if (s.mode === "list") s.scroll = D.sc - (p[1] - D.gy);
+        else s.dscroll = D.sc - (p[1] - D.gy);
+        clampScroll();
+      }
+    };
+    s.dragEnd = function(cx, cy, cancel) {
+      var D = s.drag;
+      s.drag = null;
+      if (!D || cancel || D.moved) return;
+      var p = toGame(cx, cy);
+      if (p[0] < 0) p = [D.lx, D.ly];
+      s.tap(p[0], p[1]);
+    };
+    s.tap = function(gx, gy) {
+      var g = geo();
+      if (gx < g.x || gx > g.x + g.w || gy < g.y || gy > g.y + g.h || inCloseBox(g, gx, gy)) {
+        back();
+        return;
+      }
+      if (s.mode === "list") {
+        if (gy >= g.y + 20 && gy < g.y + 36) {
+          toggleSort();
+          return;
+        }
+        var v = listView();
+        if (gy < v.top || gy > v.bot) return;
+        var i = Math.floor((gy - v.top + s.scroll) / PITCH);
+        if (i >= 0 && i < s.list.length) {
+          s.sel = i;
+          openDetail(i);
+        }
+      } else if (gy >= g.y + g.h - 22) {
+        if (gx < g.x + 70) {
+          openDetail((s.sel + s.list.length - 1) % s.list.length);
+        } else if (gx > g.x + g.w - 70) {
+          openDetail((s.sel + 1) % s.list.length);
+        } else back();
+      }
+    };
+    function clipTo(x, y, w, h) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+    }
+    function drawScrollbar(g, top, bot, total, sc) {
+      var vh = bot - top;
+      if (total <= vh) return;
+      var th = Math.max(10, Math.round(vh * vh / total)), ty = top + Math.round((vh - th) * (sc / (total - vh)));
+      R(ctx, g.x + g.w - 6, top, 2, vh, "#141838");
+      R(ctx, g.x + g.w - 6, ty, 2, th, "#f0c850");
+    }
+    function drawList(g) {
+      drawText(ctx, "MONSTERS", g.x + 12, g.y + 8, "#f8e080");
+      drawText(ctx, String(s.list.length), g.x + 12 + 9 * 6, g.y + 8, "#8890b8");
+      drawCloseBox(ctx, g);
+      var by = g.y + 21;
+      drawWindow(ctx, g.x + 10, by, g.w - 22, 14);
+      var lab = s.strongest ? "Strongest first  v" : "Weakest first  ^";
+      drawText(ctx, "Power: " + lab, g.x + 16, by + 3, "#c8e0ff");
+      drawText(ctx, "< >", g.x + g.w - 40, by + 3, "#8890b8");
+      var v = listView(), maxP = cache.maxPower;
+      clipTo(g.x + 3, v.top, g.w - 6, v.bot - v.top);
+      for (var i = 0; i < s.list.length; i++) {
+        var r = s.list[i], ry = v.top + i * PITCH - Math.round(s.scroll);
+        if (ry + PITCH < v.top || ry > v.bot) continue;
+        var sel = i === s.sel;
+        if (sel) {
+          R(ctx, g.x + 6, ry, g.w - 16, PITCH - 2, "rgba(255,224,128,0.16)");
+          R(ctx, g.x + 6, ry, g.w - 16, 1, "#f0c850");
+          R(ctx, g.x + 6, ry + PITCH - 3, g.w - 16, 1, "#f0c850");
+        }
+        var rank = s.strongest ? i + 1 : s.list.length - i;
+        drawText(ctx, "#" + rank, g.x + 9, ry + 8, sel ? "#ffe080" : "#7880a8");
+        R(ctx, g.x + 28, ry + 1, 36, 26, "rgba(10,14,40,0.55)");
+        ctx.drawImage(thumb(r.id), g.x + 29, ry + 1);
+        drawText(ctx, r.name, g.x + 69, ry + 3, sel ? "#ffffff" : "#c8d0f0");
+        drawText(ctx, "Lv" + r.e.lvl + "  PWR " + r.power, g.x + 69, ry + 13, "#a0b0e0");
+        if (r.tag) drawText(ctx, r.tag, g.x + g.w - 14 - r.tag.length * 6, ry + 3, r.tag === "BOSS" ? "#ff8080" : r.tag === "RARE" ? "#ffd060" : "#80d8ff");
+        R(ctx, g.x + 69, ry + 23, g.w - 90, 2, "#141838");
+        R(ctx, g.x + 69, ry + 23, Math.max(2, Math.round((g.w - 90) * r.power / maxP)), 2, r.tag === "BOSS" ? "#ff6050" : r.ice ? "#70c8ff" : "#f0c040");
+      }
+      ctx.restore();
+      drawScrollbar(g, v.top, v.bot, s.list.length * PITCH, s.scroll);
+      drawText(ctx, "Tap/Z: details  Drag: scroll  X: back", g.x + 12, g.y + g.h - 14, "#8890b8");
+    }
+    function drawDetail(g) {
+      var r = s.list[s.sel], D = s.det;
+      if (!D) return;
+      drawText(ctx, r.name, g.x + 12, g.y + 8, "#f8e080");
+      drawCloseBox(ctx, g);
+      var v = detView(), ox = g.x + 10, sc = Math.round(s.dscroll);
+      clipTo(g.x + 3, v.top, g.w - 6, v.bot - v.top);
+      D.ops.forEach(function(op) {
+        var y = v.top + op.y - sc;
+        if (op.t === "sprite") {
+          if (y + op.h < v.top || y > v.bot) return;
+          var spr = enemySprite(r.id, Math.floor(s.t * 2.2) % 2), k = Math.max(1, Math.min(3, Math.floor(Math.min((g.w - 24) / spr.width, (op.h - 8) / spr.height))));
+          var bw = g.w - 20;
+          R(ctx, ox, y, bw, op.h, "#0a0e28");
+          R(ctx, ox, y, bw, 1, "#2a3270");
+          R(ctx, ox, y + op.h - 1, bw, 1, "#2a3270");
+          R(ctx, ox, y, 1, op.h, "#2a3270");
+          R(ctx, ox + bw - 1, y, 1, op.h, "#2a3270");
+          var w = spr.width * k, h = spr.height * k, fx = ox + Math.round((bw - w) / 2), fy = y + op.h - 8 - h;
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          ctx.fillRect(fx + Math.round(w * 0.12), y + op.h - 9, Math.round(w * 0.76), 3);
+          ctx.drawImage(spr, 0, 0, spr.width, spr.height, fx, fy, w, h);
+        } else if (op.t === "text") {
+          if (y > v.top - 10 && y < v.bot) drawText(ctx, op.s, ox + op.x, y, op.c);
+        } else if (op.t === "rule") {
+          if (y > v.top - 2 && y < v.bot) R(ctx, ox, y, g.w - 20, 1, "#2a3270");
+        } else if (op.t === "bar") {
+          if (y > v.top - 4 && y < v.bot) {
+            R(ctx, ox + op.x, y, op.w, 5, "#141838");
+            R(ctx, ox + op.x + 1, y + 1, Math.max(1, Math.round((op.w - 2) * Math.min(1, op.f))), 3, op.c);
+          }
+        }
+      });
+      ctx.restore();
+      drawScrollbar(g, v.top, v.bot, D.h, s.dscroll);
+      var fy2 = g.y + g.h - 21;
+      drawWindow(ctx, g.x + g.w / 2 - 28, fy2, 56, 14);
+      drawText(ctx, "Back", g.x + g.w / 2 - 12, fy2 + 3, "#ffffff");
+      drawText(ctx, "<", g.x + 18, fy2 + 3, "#c8d0f0");
+      drawText(ctx, "prev", g.x + 28, fy2 + 3, "#8890b8");
+      drawText(ctx, "next", g.x + g.w - 52, fy2 + 3, "#8890b8");
+      drawText(ctx, ">", g.x + g.w - 22, fy2 + 3, "#c8d0f0");
+    }
+    s.draw = function() {
+      var g = geo();
+      clampScroll();
+      ctx.globalAlpha = 0.6;
+      R(ctx, 0, 0, W, H, "#000008");
+      ctx.globalAlpha = 1;
+      drawWindow(ctx, g.x, g.y, g.w, g.h);
+      if (s.mode === "list") drawList(g);
+      else drawDetail(g);
+    };
+    resort();
+    installListeners();
+    return s;
+  };
+  B.open = function() {
+    pushScene(B.Scene());
+  };
+  return B;
+})();
+function BestiaryScene() {
+  return Bestiary.Scene();
+}
 
 // ---- perf.js ----
 var Prewarm = {
