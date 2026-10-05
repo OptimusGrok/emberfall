@@ -31,6 +31,8 @@ body.touch #wrap{flex:1 1 auto;min-height:0;margin-top:0}
 .small{position:relative;border-radius:0;background:linear-gradient(#f0b830,#f0b830) 2px 2px/3px 3px no-repeat,linear-gradient(#f0b830,#f0b830) calc(100% - 2px) 2px/3px 3px no-repeat,linear-gradient(#f0b830,#f0b830) 2px calc(100% - 2px)/3px 3px no-repeat,linear-gradient(#f0b830,#f0b830) calc(100% - 2px) calc(100% - 2px)/3px 3px no-repeat,#2a2a44;color:#e8ecff;border:2px solid #b8bce0;box-shadow:0 2px 0 #101020;-webkit-font-smoothing:none;text-rendering:optimizeSpeed;font:bold 9px monospace;padding:6px 9px;touch-action:none;user-select:none;-webkit-user-select:none}
 .small:after{content:"";position:absolute;left:-6px;right:-6px;top:-12px;bottom:-12px}
 .small.on{filter:brightness(1.6)}
+#btnRecentre{display:none;box-sizing:border-box;min-width:44px;min-height:44px;align-items:center;justify-content:center;text-align:center}
+#btnRecentre.show{display:flex}
 @media (orientation:landscape){
  body.touch #controls{top:0;max-width:none;align-items:flex-end}
  body.touch #wrap{height:100%}
@@ -62,7 +64,7 @@ body.touch #wrap{flex:1 1 auto;min-height:0;margin-top:0}
 })();
 </script>
 <div id="controls">
-  <div class="grp"><div class="small" id="bMenu" data-act="b">MENU</div><div class="small" id="btnMute" data-act="mute">SOUND</div></div>
+  <div class="grp"><div class="small" id="btnRecentre">RECENTRE</div><div class="small" id="bMenu" data-act="b">MENU</div><div class="small" id="btnMute" data-act="mute">SOUND</div></div>
 </div>
 <script>
 
@@ -4569,6 +4571,14 @@ window.addEventListener("keydown", function(e) {
     e.preventDefault();
     return;
   }
+  if ((e.code === "KeyR" || e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    var rt = topScene();
+    if (rt && rt.name === "field" && field && field.viewAway && field.viewAway()) {
+      field.recentre();
+      e.preventDefault();
+      return;
+    }
+  }
   if (zoomKey(e)) {
     e.preventDefault();
     return;
@@ -4592,7 +4602,7 @@ function zoomKey(e) {
   if (!t || t.name !== "field" || !field || !field.canZoom()) return false;
   Audio8.init();
   if (dir) field.zoomStep(dir);
-  else field.setZoom(1, false);
+  else field.recentre();
   return true;
 }
 window.addEventListener("wheel", function(e) {
@@ -4707,7 +4717,7 @@ var TouchWalk = {
     if (this.moved || dx * dx + dy * dy > 64) {
       this.moved = true;
       var f = window.field, t = topScene();
-      if (f && f.panTo && t === f && !f.lock && canvas.getBoundingClientRect().width > 0) {
+      if (f && f.panTo && t === f && !f.lock && (typeof Opts === "undefined" || Opts.pan) && canvas.getBoundingClientRect().width > 0) {
         if (!this.pan) this.pan = { x: cx, y: cy, cx: f.camX, cy: f.camY };
         var k = W / canvas.getBoundingClientRect().width / f.zoom;
         f.panTo(this.pan.cx - (cx - this.pan.x) * k, this.pan.cy - (cy - this.pan.y) * k);
@@ -4803,6 +4813,20 @@ function setupTouch() {
     );
   });
   Secret.setup();
+  var rb = document.getElementById("btnRecentre");
+  if (rb) {
+    bindPress(rb, function() {
+      rb.classList.add("on");
+      Audio8.init();
+      if (window.field && field.recentre) field.recentre();
+    }, null, function() {
+      rb.classList.remove("on");
+    });
+    setInterval(function() {
+      var t = topScene(), show = !!(t && t.name === "field" && window.field && field.viewAway && field.viewAway());
+      if (show !== rb.classList.contains("show")) rb.classList.toggle("show", show);
+    }, 100);
+  }
   var controls = document.getElementById("controls");
   controls.addEventListener("touchmove", function(e) {
     e.preventDefault();
@@ -6154,13 +6178,20 @@ function FieldScene() {
   f.panReset = function() {
     f.pan.on = false;
   };
+  f.viewAway = function() {
+    return !!f.pan.on || f.canZoom() && Math.abs(f.zoomT - 1) > 1e-3;
+  };
+  f.recentre = function() {
+    f.pan.on = false;
+    if (f.canZoom() && f.zoomT !== 1) f.setZoom(1, false);
+  };
   f.camSnap = function() {
     var t = f.camTarget();
     f.camX = t[0];
     f.camY = t[1];
   };
   f.canZoom = function() {
-    return f.mapName === "world";
+    return !(typeof ICam !== "undefined" && ICam.is(f));
   };
   f.setZoom = function(z, instant) {
     if (!f.canZoom()) return;
@@ -6346,7 +6377,7 @@ function loadMap(name, x, y, dir) {
   f.p.dir = dir || 0;
   f.p.walkD = 0;
   f.p.stepAcc = 0;
-  f.zoom = f.zoomT = name === "world" ? clamp(G.zoom || 1, ZOOM_MIN, ZOOM_MAX) : 1;
+  f.zoom = f.zoomT = f.canZoom() ? clamp(G.zoom || 1, ZOOM_MIN, ZOOM_MAX) : 1;
   if (typeof ICam !== "undefined" && ICam.is(f)) f.zoom = f.zoomT = ICam.zoom(f);
   {
     var sp = safeInteriorSpot(f, x, y, !M.exit);
@@ -19720,6 +19751,7 @@ var Opts = {
   KEY: "emberfall_opts",
   mv: 10,
   sv: 10,
+  pan: 1,
   // 0..10 steps (10 = the original mix)
   load: function() {
     try {
@@ -19727,12 +19759,13 @@ var Opts = {
       if (d) {
         if (typeof d.mv === "number") this.mv = Math.max(0, Math.min(10, Math.round(d.mv)));
         if (typeof d.sv === "number") this.sv = Math.max(0, Math.min(10, Math.round(d.sv)));
+        if (typeof d.pan === "number") this.pan = d.pan ? 1 : 0;
       }
     } catch (e) {
     }
   },
   save: function() {
-    Store.set(this.KEY, JSON.stringify({ mv: this.mv, sv: this.sv }));
+    Store.set(this.KEY, JSON.stringify({ mv: this.mv, sv: this.sv, pan: this.pan }));
   },
   apply: function() {
     try {
@@ -19741,6 +19774,11 @@ var Opts = {
     } catch (e) {
     }
   },
+  togglePan: function() {
+    this.pan = this.pan ? 0 : 1;
+    this.save();
+  },
+  // Options > Drag to pan view (default On)
   set: function(k, v) {
     this[k] = Math.max(0, Math.min(10, Math.round(v)));
     this.save();
@@ -19797,7 +19835,7 @@ Opts.load();
   }
 })();
 function OptionsScene(onClose) {
-  var s = { name: "options", overlay: true, i: 0, t: 0 }, ROWS = ["music", "sfx", "mute", "back"], X0 = 20, Y0 = 44, WW = 216, BAR = 90, PITCH = 24;
+  var s = { name: "options", overlay: true, i: 0, t: 0 }, ROWS = ["music", "sfx", "mute", "pan", "back"], X0 = 20, Y0 = 44, WW = 216, BAR = 90, PITCH = 24;
   function close() {
     Audio8.sfx("cancel");
     popScene();
@@ -19821,11 +19859,17 @@ function OptionsScene(onClose) {
       else if (row === "mute") {
         toggleMute();
         Audio8.sfx("cursor");
+      } else if (row === "pan") {
+        Opts.togglePan();
+        Audio8.sfx("cursor");
       }
     }
     if (Input.pressed("a")) {
       if (row === "mute") toggleMute();
-      else if (row === "back") close();
+      else if (row === "pan") {
+        Opts.togglePan();
+        Audio8.sfx("cursor");
+      } else if (row === "back") close();
       else Audio8.sfx("ok");
     }
     if (Input.pressed("b")) close();
@@ -19843,6 +19887,9 @@ function OptionsScene(onClose) {
     if (row === "back") close();
     else if (row === "mute") {
       toggleMute();
+      Audio8.sfx("cursor");
+    } else if (row === "pan") {
+      Opts.togglePan();
       Audio8.sfx("cursor");
     } else {
       var bx = X0 + 84;
@@ -19872,6 +19919,9 @@ function OptionsScene(onClose) {
       } else if (row === "mute") {
         drawText(ctx, "Sound", X0 + 20, y, col);
         drawText(ctx, Audio8.muted ? "OFF (muted)" : "ON", X0 + 84, y, Audio8.muted ? "#ff9090" : "#90f090");
+      } else if (row === "pan") {
+        drawText(ctx, "Drag to pan view", X0 + 20, y, col);
+        drawText(ctx, Opts.pan ? "ON" : "OFF", X0 + 150, y, Opts.pan ? "#90f090" : "#ff9090");
       } else drawText(ctx, "Back", X0 + 20, y, col);
     });
     drawText(ctx, "Left/Right: change   X/Esc: back", 128 - textWidth("Left/Right: change   X/Esc: back") / 2, Y0 + 34 + ROWS.length * PITCH - 12, "#7078a0");
