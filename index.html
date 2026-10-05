@@ -6789,15 +6789,53 @@ function castFieldSpell(caster, sp, m) {
 })();
 var MENU_OPTS = ["Items", "Magic", "Equip", "Status", "Quests", "Save", "Autosave", "Options", "Cards", "Close"];
 function menuGeo(E) {
-  var tot = 180 + E, th = Math.max(121, Math.ceil(tot / 2)), zp = (th - 4) / MENU_OPTS.length;
-  return { th, bh: tot - th, zp, ry: function(i) {
-    return Math.round(2 + zp * i + 6 + (zp - 13) / 2 - 3.5 * Math.max(0, Math.min(1, (zp - 13) / 4)));
-  } };
+  var tot = 180 + E, th = Math.max(121, Math.ceil(tot / 2)), N = MENU_OPTS.length, zp1 = (th - 4) / N, two = false;
+  if (E === 0 && typeof canvas !== "undefined" && canvas && canvas.getBoundingClientRect) {
+    var cr = canvas.getBoundingClientRect();
+    if (cr.height > 0 && zp1 * cr.height / H < 28) two = true;
+  }
+  var R2 = two ? Math.ceil(N / 2) : N, zp = two ? (th - 4) / R2 : zp1, ip = two ? 13 : zp, lw = two ? 128 : 184;
+  var rowY = function(r, p) {
+    return Math.round(2 + p * r + 6 + (p - 13) / 2 - 3.5 * Math.max(0, Math.min(1, (p - 13) / 4)));
+  };
+  return {
+    th,
+    bh: tot - th,
+    zp,
+    ip,
+    two,
+    lw,
+    n: N,
+    rows: R2,
+    col: function(i) {
+      return two ? Math.floor(i / R2) : 0;
+    },
+    ry: function(i) {
+      return rowY(two ? i % R2 : i, zp);
+    },
+    ryi: function(i) {
+      return rowY(i, ip);
+    },
+    ix: function(i) {
+      return two ? lw + 64 * Math.floor(i / R2) + 3 : 190;
+    },
+    tx: function(i) {
+      return two ? lw + 64 * Math.floor(i / R2) + 12 : 202;
+    },
+    hx: function(i) {
+      return two ? lw + 64 * Math.floor(i / R2) + 1 : 188;
+    }
+  };
+}
+function menuHit(mg, gx, dy) {
+  if (gx < mg.lw || dy < 2 || dy >= 2 + mg.zp * mg.rows) return -1;
+  var row = Math.floor((dy - 2) / mg.zp), col = mg.two ? gx >= mg.lw + 64 ? 1 : 0 : 0, i = col * mg.rows + row;
+  return i < mg.n ? i : -1;
 }
 function infoGeo(mg) {
-  var by = mg.th, top = by + 2 + mg.zp * 2, hh = Math.max(mg.zp, 30);
+  var by = mg.th, top = by + 2 + mg.ip * 2, hh = Math.max(mg.ip, 30);
   return { by, ry: function(i) {
-    return by + mg.ry(i);
+    return by + mg.ryi(i);
   }, top, hy0: top, hy1: Math.min(by + mg.bh - 1, top + hh) };
 }
 function fmtClock(t) {
@@ -7017,15 +7055,17 @@ function MenuScene() {
     var P = G.party, m = P[s.pc.i], mode = s.mode, direct = mode === "main" || mode === "pick" || mode === "itemTarget" || mode === "magicTarget" || mode === "autoload";
     var E = Math.max(0, H - 224 - BOT), sp = 43 + Math.floor(E / 3), dy = direct ? gy : stretchInvY(gy);
     if (mode === "main") {
-      if (gx >= 184) {
-        var mg = menuGeo(E), mb = infoGeo(mg);
+      var mg = menuGeo(E);
+      if (gx >= mg.lw) {
+        var mb = infoGeo(mg);
         if (dy >= mb.hy0 && dy < mb.hy1) {
           Audio8.sfx("ok");
           s.mon = true;
           pushScene(BestiaryScene());
         } else {
-          if (dy >= 2 && dy < 2 + mg.zp * MENU_OPTS.length) s.mon = false;
-          pickIdx(s.cur, Math.floor((dy - 2) / mg.zp), MENU_OPTS.length);
+          var ci = menuHit(mg, gx, dy);
+          if (ci >= 0) s.mon = false;
+          pickIdx(s.cur, ci, MENU_OPTS.length);
         }
       }
       return true;
@@ -7039,11 +7079,11 @@ function MenuScene() {
       return true;
     }
     if (mode === "pick") {
-      if (gx < 184) pickIdx(s.pc, Math.floor((dy - 4) / sp), P.length);
+      if (gx < menuGeo(E).lw) pickIdx(s.pc, Math.floor((dy - 4) / sp), P.length);
       return true;
     }
     if (mode === "itemTarget" || mode === "magicTarget") {
-      if (gx < 184) pickIdx(s.tg, Math.floor((dy - 4) / sp), P.length);
+      if (gx < menuGeo(E).lw) pickIdx(s.tg, Math.floor((dy - 4) / sp), P.length);
       return true;
     }
     if (mode === "items") {
@@ -7074,30 +7114,30 @@ function MenuScene() {
     R(ctx, 0, 0, W, s.direct ? H : 224, "#000");
     var P = G.party, m = P[s.pc.i];
     if (s.mode === "main" || s.mode === "pick" || s.mode === "itemTarget" || s.mode === "magicTarget" || s.mode === "autoload") {
-      drawWindow(ctx, 0, 0, 184, 180 + E);
-      P.forEach(function(pm, i) {
-        partyPanel(22, 6 + i * sp, pm);
-      });
       var MG = menuGeo(E);
-      drawWindow(ctx, 184, 0, 72, MG.th);
+      drawWindow(ctx, 0, 0, MG.lw, 180 + E);
+      P.forEach(function(pm, i) {
+        partyPanel(MG.two ? 14 : 22, 6 + i * sp, pm);
+      });
+      drawWindow(ctx, MG.lw, 0, 256 - MG.lw, MG.th);
       var MENU_ICON = { Items: "potion", Magic: "bolt", Equip: "blade", Status: "status", Quests: "book", Save: "disk", Autosave: "autosave", Options: "gear", Close: "cross", Sound: "wind" };
       MENU_OPTS.forEach(function(o, i) {
-        if (!(s.mode === "main" && !s.mon && s.cur.i === i)) drawIcon(ctx, MENU_ICON[o] || "gem", 190, MG.ry(i));
-        drawText(ctx, o === "Sound" ? Audio8.muted ? "Snd:Off" : "Snd:On" : o, 202, MG.ry(i));
+        if (!(s.mode === "main" && !s.mon && s.cur.i === i)) drawIcon(ctx, MENU_ICON[o] || "gem", MG.ix(i), MG.ry(i));
+        drawText(ctx, o === "Sound" ? Audio8.muted ? "Snd:Off" : "Snd:On" : o, MG.tx(i), MG.ry(i));
       });
-      drawWindow(ctx, 184, MG.th, 72, MG.bh);
+      drawWindow(ctx, MG.lw, MG.th, 256 - MG.lw, MG.bh);
       var IG = infoGeo(MG), clk = fmtClock(G.time), gld = String(G.gold), mf = s.mode === "main" && s.mon;
-      drawText(ctx, clk.length > 7 ? "T" : "Time", 187, IG.ry(0), "#a0c8ff");
+      drawText(ctx, clk.length > 7 && !MG.two ? "T" : "Time", MG.lw + 3, IG.ry(0), "#a0c8ff");
       drawText(ctx, clk, 254 - clk.length * 6, IG.ry(0));
-      drawText(ctx, "Gold", 187, IG.ry(1), "#a0c8ff");
+      drawText(ctx, "Gold", MG.lw + 3, IG.ry(1), "#a0c8ff");
       drawText(ctx, gld, 254 - gld.length * 6, IG.ry(1));
-      if (!mf) drawIcon(ctx, "fist", 190, IG.ry(2));
-      else ctx.drawImage(SPR.hand, 188, IG.ry(2));
-      drawText(ctx, "Monsters", 202, IG.ry(2));
+      if (!mf) drawIcon(ctx, "fist", MG.lw + 6, IG.ry(2));
+      else ctx.drawImage(SPR.hand, MG.lw + 4, IG.ry(2));
+      drawText(ctx, "Monsters", MG.lw + 18, IG.ry(2));
       drawWindow(ctx, 0, 180 + E, 256, 44 + X);
       drawText(ctx, field.M.name, 10, 188 + E, "#f8e080");
       if (s.mode === "main") {
-        if (!s.mon) ctx.drawImage(SPR.hand, 188, MG.ry(s.cur.i));
+        if (!s.mon) ctx.drawImage(SPR.hand, MG.hx(s.cur.i), MG.ry(s.cur.i));
         var ad = Autosave.read();
         drawText(ctx, s.msgT > 0 ? s.msg : ad ? Autosave.describe(ad) : "X/Esc: close menu", 10, 204 + E);
       } else if (s.mode === "autoload") {
